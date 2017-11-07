@@ -1,65 +1,58 @@
-{
-	"Records": [
-		{
-			"eventID": "7f8c4d2486c5a98e1fc8a872c5dbc836",
-			"eventVersion": "1.1",
-			"dynamodb": {
-				"SequenceNumber": "31200000000011351682875",
-				"Keys": {
-					"NewOrderId": {
-						"S": "c1c94c4fbf254142a7e01ecd0b8ebb84"
-					},
-					"TransactionTime": {
-						"S": "1499970241.49"
-					}
-				},
-				"SizeBytes": 259,
-				"NewImage": {
-					"Status": {
-						"S": "PENDING"
-					},
-					"ClientOrderId": {
-						"N": "0"
-					},
-					"NewOrderId": {
-						"S": "011400d3583f4bd8ad3daf7153f34707"
-					},
-					"TransactionTime": {
-						"S": "1501177539.2"
-					},
-					"Details": {
-						"M": {
-							"OrdType": {
-								"S": "MARKET"
-							},
-							"Price": {
-								"N": "0"
-							},
-							"Side": {
-								"S": "BUY"
-							},
-							"Maturity": {
-								"S": "201709"
-							},
-							"ProductType": {
-								"S": "FUTURE"
-							},
-							"Symbol": {
-								"S": "6E"
-							},
-							"Quantity": {
-								"N": "1"
-							}
-						}
-					}
-				},
-				"ApproximateCreationDateTime": 1499970240,
-				"StreamViewType": "NEW_AND_OLD_IMAGES"
-			},
-			"awsRegion": "us-east-1",
-			"eventName": "INSERT",
-			"eventSourceARN": "arn",
-			"eventSource": "aws:dynamodb"
-		}
-	]
+{"Records": [
+    {
+      "eventID": "eaf346c6365ceb3ac957086638715011",
+      "eventName": "INSERT",
+      "eventVersion": "1.1",
+      "eventSource": "aws:dynamodb",
+      "awsRegion": "us-east-1",
+      "dynamodb": {
+        "ApproximateCreationDateTime": 1509999900,
+        "Keys": {
+          "Symbol": {
+            "S": "VIX"
+          },
+          "Date": {
+            "S": "20171106"
+          }
+        },
+        "NewImage": {
+          "Details": {
+            "M": {
+              "High": {
+                "N": "9.74"
+              },
+              "Low": {
+                "N": "9.39"
+              },
+              "Volume": {
+                "N": "0"
+              },
+              "Close": {
+                "N": "9.43"
+              },
+              "Count": {
+                "N": "771"
+              },
+              "Open": {
+                "N": "9.63"
+              }
+            }
+          },
+          "Symbol": {
+            "S": "VIX"
+          },
+          "Date": {
+            "S": "20171106"
+          },
+          "Source": {
+            "S": "IB"
+          }
+        },
+        "SequenceNumber": "178155100000000035503165011",
+        "SizeBytes": 109,
+        "StreamViewType": "NEW_AND_OLD_IMAGES"
+      },
+      "eventSourceARN": "arn:aws:dynamodb:arn"
+    }
+  ]
 }

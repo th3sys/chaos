@@ -18,7 +18,7 @@ class SecurityDefinition(object):
 
     # lifted from https://github.com/conor10/examples/blob/master/python/expiries/vix.py
     @staticmethod
-    def __get_vix_expiry_date(date):
+    def get_vix_expiry_date(date):
         """
         http://cfe.cboe.com/products/spec_vix.aspx
 
@@ -62,7 +62,7 @@ class SecurityDefinition(object):
                 raise Exception('Symbol %s not supported' % symbol)
             # TODO: add support for more contracts
             if symbol == Futures.VX:
-                expiry = self.__get_vix_expiry_date(today)
+                expiry = self.get_vix_expiry_date(today)
                 return self.__get_vix(today if today < expiry else today + relativedelta(months=+1))
 
         except Exception as e:
@@ -85,7 +85,7 @@ class SecurityDefinition(object):
             futures.append(front)
             # TODO: add support for more contracts
             if symbol == Futures.VX:
-                expiry = self.__get_vix_expiry_date(today)
+                expiry = self.get_vix_expiry_date(today)
             else:
                 expiry = today
             roll = 1 if today < expiry else 2
