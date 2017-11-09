@@ -6,7 +6,20 @@ import json
 from utils import Connection, DecimalEncoder
 from contracts import SecurityDefinition
 import datetime
+from dateutil.relativedelta import relativedelta
 from functools import reduce
+
+
+class Side:
+    Buy = 'BUY'
+    Sell = 'SELL'
+
+
+class Quote(object):
+    def __init__(self, symbol):
+        self.Symbol = symbol
+        self.Date = None
+        self.Close = 0.0
 
 
 class VixTrader(object):
@@ -19,22 +32,28 @@ class VixTrader(object):
         self.__Trades = db.Table('Trades')
 
         self.Logger.info('VixTrader Created')
-        self.__FrontFuture = self.secDef.get_front_month_future('VX')
+        self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX'))
         self.__OpenPosition = 0
-        self.__VIX = 'VIX'
+        self.__MaxRoll = 0.1
+        self.__StdSize = 100
+        self.__VIX = Quote('VIX')
 
     def BothQuotesArrived(self):
         today = datetime.datetime.today().strftime('%Y%m%d')
-        vix = self.GetQuotes(self.__VIX, today)
+        vix = self.GetQuotes(self.__VIX.Symbol, today)
         if len(vix) > 0:
+            self.__VIX.Close = vix[0]['Details']['Close']
+            self.__VIX.Date = vix[0]['Date']
             self.Logger.info('VIX quote for EOD %s has arrived' % today)
-        future = self.GetQuotes(self.__FrontFuture, today)
+        future = self.GetQuotes(self.__FrontFuture.Symbol, today)
         if len(future) > 0:
-            self.Logger.info('%s quote for EOD %s has arrived' % (self.__FrontFuture, today))
+            self.__FrontFuture.Close = future[0]['Details']['Close']
+            self.__FrontFuture.Date = future[0]['Date']
+            self.Logger.info('%s quote for EOD %s has arrived' % (self.__FrontFuture.Symbol, today))
         return len(vix) and len(future)
 
     def GetCurrentPosition(self):
-        trades = self.GetTrades(self.__FrontFuture)
+        trades = self.GetTrades(self.__FrontFuture.Symbol)
 
         expiry = SecurityDefinition.get_vix_expiry_date(datetime.datetime.today().date())
         nextMonth = list(map(lambda x: x['Details'],
@@ -49,20 +68,54 @@ class VixTrader(object):
 
         return long - short
 
+    def IsExceeded(self, side, size, position):
+        pass
+
+    def SendOrder(self, side, size):
+        pass
+
     def Run(self, symbol):
-        self.Logger.info('Run for symbol %s, FrontFuture %s' % (symbol, self.__FrontFuture))
-        if symbol == self.__VIX or symbol == self.__FrontFuture:
-            if not self.BothQuotesArrived():
+        self.Logger.info('Run for symbol %s, FrontFuture %s' % (symbol, self.__FrontFuture.Symbol))
+        if symbol != self.__VIX.Symbol and symbol != self.__FrontFuture.Symbol:
+            self.Logger.warn('Neither spot or Front Future')
+            return
+
+        if not self.BothQuotesArrived():
+            self.Logger.warn('Need both spot and future to run the strategy')
+            return
+
+        today = datetime.datetime.today().date()
+        expiry = self.secDef.get_vix_expiry_date(today)
+        self.__OpenPosition = self.GetCurrentPosition()
+        if self.__OpenPosition != 0 and today == expiry - relativedelta(days=+1):
+            self.Logger.warn('Close any open %s trades one day before the expiry on %s' %
+                             (self.__FrontFuture.Symbol, expiry))
+            side = Side.Sell if self.__OpenPosition > 0 else Side.Buy
+            size = abs(self.__OpenPosition)
+            self.SendOrder(side=side, size=size)
+            return
+
+        days_left = (expiry - today).days
+        if days_left <= 0:
+            self.Logger.warn('Expiry in the past. Expiry: %s. Today: %s' % (expiry, today))
+            return
+
+        roll = (self.__FrontFuture.Close - self.__VIX.Close) / days_left
+        self.Logger.info('The %s roll on %s with %s days left' % (roll, self.__FrontFuture.Symbol, days_left))
+
+        if abs(roll) >= self.__MaxRoll:
+            side = Side.Sell if (self.__FrontFuture.Close - self.__VIX.Close) >= 0 else Side.Buy
+            if self.IsExceeded(side=side, size=self.__StdSize, position=self.__OpenPosition):
+                self.Logger.warn('Exceeded MaxPosition size: %s, pos: %s' % (self.__StdSize, self.__OpenPosition))
                 return
-            self.__OpenPosition = self.GetCurrentPosition()
-            # close if expiry day
-            # check secdef does not exceed max plus open
+            self.SendOrder(side=side, size=self.__StdSize)
 
     @Connection.reliable
     def GetSecurities(self):
         try:
-            self.Logger.info('Calling securities scan ...')
-            response = self.__Securities.scan(FilterExpression=Attr('SubscriptionEnabled').eq(True))
+            self.Logger.info('Calling securities query ...')
+            response = self.__Securities.query(
+                KeyConditionExpression=Key('Symbol').eq('VX') & Key('Broker').eq('IG'))
         except ClientError as e:
             self.Logger.error(e.response['Error']['Message'])
             return None
