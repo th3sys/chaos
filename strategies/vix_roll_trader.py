@@ -6,8 +6,11 @@ import json
 from utils import Connection, DecimalEncoder
 from contracts import SecurityDefinition
 import datetime
+import decimal
 from dateutil.relativedelta import relativedelta
 from functools import reduce
+import uuid
+import time
 
 
 class Side:
@@ -29,7 +32,7 @@ class VixTrader(object):
         db = boto3.resource('dynamodb', region_name='us-east-1')
         self.__QuotesEod = db.Table('Quotes.EOD')
         self.__Securities = db.Table('Securities')
-        self.__Trades = db.Table('Trades')
+        self.__Orders = db.Table('Orders')
 
         self.Logger.info('VixTrader Created')
         self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX'))
@@ -53,26 +56,86 @@ class VixTrader(object):
         return len(vix) and len(future)
 
     def GetCurrentPosition(self):
-        trades = self.GetTrades(self.__FrontFuture.Symbol)
+        trades = filter(lambda x: x['Status'] == 'FILLED' or x['Status'] == 'PART_FILLED',
+                        self.GetOrders(self.__FrontFuture.Symbol))
 
         expiry = SecurityDefinition.get_vix_expiry_date(datetime.datetime.today().date())
-        nextMonth = list(map(lambda x: x['Details'],
-                             filter(lambda x: x['Details']['Maturity'] == expiry.strftime('%Y%m'), trades)))
+        nextMonth = list(map(lambda x: x['Trade'],
+                             filter(lambda x: x['Maturity'] == expiry.strftime('%Y%m'), trades)))
 
         if len(nextMonth) == 0:
+            self.Logger.info('No open positions have been found')
             return 0
+
         long = reduce(lambda x, y: x + y,
-                      map(lambda x: x['Quantity'], filter(lambda x: x['Side'] == 'BUY', nextMonth)), 0)
+                      map(lambda x: x['FilledSize'], filter(lambda x: x['Side'] == 'BUY', nextMonth)), 0)
         short = reduce(lambda x, y: x + y,
-                       map(lambda x: x['Quantity'], filter(lambda x: x['Side'] == 'SELL', nextMonth)), 0)
+                       map(lambda x: x['FilledSize'], filter(lambda x: x['Side'] == 'SELL', nextMonth)), 0)
 
         return long - short
 
-    def IsExceeded(self, side, size, position):
-        pass
+    def IsExceeded(self, side, quantity, position):
+        vix = self.GetSecurities()
+        if vix is None or len(vix) == 0:
+            self.Logger.error('No VX in security definition table')
+            return True
+        maxPosition = vix[0]['Risk']['MaxPosition']
+        self.Logger.info('MaxPosition is %s' % maxPosition)
+        if side == Side.Buy and maxPosition < position + quantity:
+            return True
+        if side == Side.Sell and maxPosition < abs(position - quantity):
+            return True
 
-    def SendOrder(self, side, size):
-        pass
+        return False
+
+    def SendOrder(self, symbol, maturity, side, size, reason):
+        try:
+            order = {
+                "Side": side,
+                "Size": decimal.Decimal(str(size)),
+                "OrdType": "MARKET"
+            }
+            trade = {}
+            strategy = {
+                "Name": "VIX ROLL",
+                "Reason": reason
+            }
+
+            response = self.__Orders.update_item(
+                Key={
+                    'OrderId': str(uuid.uuid4().hex),
+                    'TransactionTime': str(time.time()),
+                },
+                UpdateExpression="set #st = :st, #s = :s, #m = :m, #p = :p, #b = :b, #o = :o, #t = :t, #str = :str",
+                ExpressionAttributeNames={
+                    '#st': 'Status',
+                    '#s': 'Symbol',
+                    '#m': 'Maturity',
+                    '#p': 'ProductType',
+                    '#b': 'Broker',
+                    '#o': 'Order',
+                    '#t': 'Trade',
+                    '#str': 'Strategy'
+                },
+                ExpressionAttributeValues={
+                    ':st': 'PENDING',
+                    ':s': symbol,
+                    ':m': maturity,
+                    ':p': 'CFD',
+                    ':b': 'IG',
+                    ':o': order,
+                    ':t': trade,
+                    ':str': strategy
+                },
+                ReturnValues="UPDATED_NEW")
+
+        except ClientError as e:
+            self.Logger.error(e.response['Error']['Message'])
+        except Exception as e:
+            self.Logger.error(e)
+        else:
+            self.Logger.info('Order Created')
+            self.Logger.info(json.dumps(response, indent=4, cls=DecimalEncoder))
 
     def Run(self, symbol):
         self.Logger.info('Run for symbol %s, FrontFuture %s' % (symbol, self.__FrontFuture.Symbol))
@@ -92,7 +155,8 @@ class VixTrader(object):
                              (self.__FrontFuture.Symbol, expiry))
             side = Side.Sell if self.__OpenPosition > 0 else Side.Buy
             size = abs(self.__OpenPosition)
-            self.SendOrder(side=side, size=size)
+            self.SendOrder(symbol=self.__FrontFuture.Symbol, side=side, size=size,
+                           maturity=expiry.strftime('%Y%m'), reason='CLOSE')
             return
 
         days_left = (expiry - today).days
@@ -105,10 +169,12 @@ class VixTrader(object):
 
         if abs(roll) >= self.__MaxRoll:
             side = Side.Sell if (self.__FrontFuture.Close - self.__VIX.Close) >= 0 else Side.Buy
-            if self.IsExceeded(side=side, size=self.__StdSize, position=self.__OpenPosition):
+            if self.IsExceeded(side=side, quantity=self.__StdSize, position=self.__OpenPosition):
                 self.Logger.warn('Exceeded MaxPosition size: %s, pos: %s' % (self.__StdSize, self.__OpenPosition))
                 return
-            self.SendOrder(side=side, size=self.__StdSize)
+
+            self.SendOrder(symbol=self.__FrontFuture.Symbol, side=side, size=self.__StdSize,
+                           maturity=expiry.strftime('%Y%m'), reason='OPEN')
 
     @Connection.reliable
     def GetSecurities(self):
@@ -127,12 +193,11 @@ class VixTrader(object):
                 return response['Items']
 
     @Connection.reliable
-    def GetTrades(self, symbol):
+    def GetOrders(self, symbol):
         try:
-            self.Logger.info('Calling trades query key: %s' % symbol)
-            response = self.__Trades.query(
-                KeyConditionExpression=Key('Symbol').eq(symbol)
-            )
+            self.Logger.info('Calling orders scan attr: %s' % symbol)
+            response = self.__Orders.scan(FilterExpression=Attr('Symbol').eq(symbol))
+
         except ClientError as e:
             self.Logger.error(e.response['Error']['Message'])
             return None

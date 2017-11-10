@@ -1,16 +1,26 @@
 [
   {
-    "Symbol" : "VXU7",
+    "OrderId" : "9fe2c4e93f654fdbb24c02b15259716c",
     "TransactionTime" : "1499723976.27",
     "Status" : "PENDING",
-    "Details" : {
+    "Symbol" : "VXU7",
+    "Maturity" : "201709",
+    "ProductType" : "CFD",
+    "Broker" : "IG",
+    "Order" : {
         "Side" : "BUY",
-        "ProductType" : "FUT",
-        "Symbol" : "VXU7",
-        "Maturity" : "201709",
-        "Quantity" : 1,
-        "OrdType" : "MARKET",
-        "Price" : 0
+        "Size" : 100,
+        "OrdType" : "MARKET"
+    },
+    "Trade" : {
+      "FillTime" : "1499723976.29",
+      "Side" : "BUY",
+      "FilledSize" : 100,
+      "Price" : 14.5
+    },
+    "Strategy" : {
+      "Name" : "VIX ROLL",
+      "Reason" : "OPEN"
     }
   }
 ]
