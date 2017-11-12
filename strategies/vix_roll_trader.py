@@ -11,6 +11,7 @@ from dateutil.relativedelta import relativedelta
 from functools import reduce
 import uuid
 import time
+import os
 
 
 class Side:
@@ -33,6 +34,9 @@ class VixTrader(object):
         self.__QuotesEod = db.Table('Quotes.EOD')
         self.__Securities = db.Table('Securities')
         self.__Orders = db.Table('Orders')
+        s3 = boto3.resource('s3')
+        debug = os.environ["DEBUG_FOLDER"]
+        self.__debug = s3.Bucket(debug)
 
         self.Logger.info('VixTrader Created')
         self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX'))
@@ -40,6 +44,13 @@ class VixTrader(object):
         self.__MaxRoll = 0.1
         self.__StdSize = 100
         self.__VIX = Quote('VIX')
+
+    def S3Debug(self, line):
+        self.__debug.download_file('vix_roll.txt', '/tmp/vix_roll.txt')
+        f = open('/tmp/vix_roll.tx', 'w')
+        f.write(line)
+        f.close()
+        self.__debug.upload_file('/tmp/vix_roll.txt', 'vix_roll.txt')
 
     def BothQuotesArrived(self):
         today = datetime.datetime.today().strftime('%Y%m%d')
@@ -165,6 +176,9 @@ class VixTrader(object):
             return
 
         roll = (self.__FrontFuture.Close - self.__VIX.Close) / days_left
+        self.S3Debug('%s,%s,%s,%s,%s,%s\n'
+                     % (today.strftime('%Y%m%d'), self.__FrontFuture.Symbol, self.__FrontFuture.Close,
+                        self.__VIX.Close, days_left, roll))
         self.Logger.info('The %s roll on %s with %s days left' % (roll, self.__FrontFuture.Symbol, days_left))
 
         if abs(roll) >= self.__MaxRoll:
