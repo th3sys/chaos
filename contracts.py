@@ -56,6 +56,19 @@ class SecurityDefinition(object):
     def __get_vix(self, date):
         return "%s%s%s" % (self.__Supported[Futures.VX], self.__M[date.month], str(date.year)[-1:])
 
+    def get_next_expiry_date(self, symbol, today):
+        try:
+            if symbol not in self.__Supported:
+                raise Exception('Symbol %s not supported' % symbol)
+            # TODO: add support for more contracts
+            if symbol == Futures.VX:
+                expiry = self.get_vix_expiry_date(today)
+                return expiry if today < expiry else self.get_vix_expiry_date(today + relativedelta(months=+1))
+
+        except Exception as e:
+            self.Logger.error(e)
+            return None
+
     def get_next_expiry(self, symbol, today):
         try:
             if symbol not in self.__Supported:

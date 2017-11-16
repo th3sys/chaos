@@ -4,7 +4,7 @@ from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key, Attr
 import json
 from utils import Connection, DecimalEncoder
-from contracts import SecurityDefinition
+from contracts import SecurityDefinition, Futures
 import datetime
 import decimal
 from dateutil.relativedelta import relativedelta
@@ -12,6 +12,7 @@ from functools import reduce
 import uuid
 import time
 import os
+import math
 
 
 class Side:
@@ -47,7 +48,7 @@ class VixTrader(object):
 
     def S3Debug(self, line):
         self.__debug.download_file('vix_roll.txt', '/tmp/vix_roll.txt')
-        f = open('/tmp/vix_roll.tx', 'w')
+        f = open('/tmp/vix_roll.txt', 'a')
         f.write(line)
         f.close()
         self.__debug.upload_file('/tmp/vix_roll.txt', 'vix_roll.txt')
@@ -70,7 +71,8 @@ class VixTrader(object):
         trades = filter(lambda x: x['Status'] == 'FILLED' or x['Status'] == 'PART_FILLED',
                         self.GetOrders(self.__FrontFuture.Symbol))
 
-        expiry = SecurityDefinition.get_vix_expiry_date(datetime.datetime.today().date())
+        today = datetime.datetime.today().date()
+        expiry = self.secDef.get_next_expiry_date(symbol=Futures.VX, today=today)
         nextMonth = list(map(lambda x: x['Trade'],
                              filter(lambda x: x['Maturity'] == expiry.strftime('%Y%m'), trades)))
 
@@ -159,7 +161,7 @@ class VixTrader(object):
             return
 
         today = datetime.datetime.today().date()
-        expiry = self.secDef.get_vix_expiry_date(today)
+        expiry = self.secDef.get_next_expiry_date(Futures.VX, today)
         self.__OpenPosition = self.GetCurrentPosition()
         if self.__OpenPosition != 0 and today == expiry - relativedelta(days=+1):
             self.Logger.warn('Close any open %s trades one day before the expiry on %s' %
@@ -176,6 +178,7 @@ class VixTrader(object):
             return
 
         roll = (self.__FrontFuture.Close - self.__VIX.Close) / days_left
+        roll = round(roll, 2)
         self.S3Debug('%s,%s,%s,%s,%s,%s\n'
                      % (today.strftime('%Y%m%d'), self.__FrontFuture.Symbol, self.__FrontFuture.Close,
                         self.__VIX.Close, days_left, roll))
@@ -250,11 +253,11 @@ def main(event, context):
 
     response = {'State': 'OK'}
     try:
-        vix = VixTrader(logger)
         for record in event['Records']:
             if record['eventName'] == 'INSERT':
                 symbol = record['dynamodb']['Keys']['Symbol']['S']
                 logger.info('New Quote received Symbol: %s', symbol)
+                vix = VixTrader(logger)
                 vix.Run(symbol)
             else:
                 logger.info('Not INSERT event is ignored')
