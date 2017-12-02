@@ -9,6 +9,7 @@ from utils import Connection
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 import functools
+from functools import reduce
 import typing
 
 
@@ -60,6 +61,7 @@ class IGClient:
         self.__password = password
         self.__url = url
         self.__key = key
+        self.__tokens = None
         self.__loop = loop if loop is not None else asyncio.get_event_loop()
 
     @Connection.ioreliable
@@ -68,13 +70,12 @@ class IGClient:
             url = '%s/%s' % (self.__url, 'session')
             with async_timeout.timeout(self.__timeout):
                 self.__logger.info('Calling Logout ...')
-                response = await self.__connection.delete(url=url, headers={'X-IG-API-KEY': self.__key})
+                response = await self.__connection.delete(url=url, headers=self.__tokens)
                 self.__logger.info('Logout Response Code: {}'.format(response.status))
-                payload = await response.json()
-                return payload
+                return True
         except Exception as e:
             self.__logger.error('Logout: %s, %s' % (self.__url, e))
-            return None
+            return False
 
     @Connection.ioreliable
     async def Login(self):
@@ -87,9 +88,10 @@ class IGClient:
                     'encryptedPassword': None
                 }
                 self.__logger.info('Calling authenticationRequest ...')
-                response = await self.__connection.post(url=url, json=authenticationRequest,
-                                                        headers={'X-IG-API-KEY': self.__key})
+                response = await self.__connection.post(url=url, json=authenticationRequest)
                 self.__logger.info('Login Response Code: {}'.format(response.status))
+                self.__tokens = {'X-SECURITY-TOKEN': response.headers['X-SECURITY-TOKEN'],
+                                 'CST': response.headers['CST']}
                 payload = await response.json()
                 return payload
         except Exception as e:
@@ -112,12 +114,14 @@ class IGClient:
 class Scheduler:
     def __init__(self, identifier, password, url, key, logger, loop=None):
         self.__timeout = 10
+        self.AllowedRisk = 0.01
         self.__logger = logger
         self.__id = identifier
         self.__password = password
         self.__url = url
         self.__key = key
         self.__store = None
+        self.Balance = None
         self.__client = None
         self.__loop = loop if loop is not None else asyncio.get_event_loop()
 
@@ -125,6 +129,7 @@ class Scheduler:
         self.__client = IGClient(self.__id, self.__password, self.__url, self.__key, self.__logger, self.__loop)
         self.__connection = await self.__client.__aenter__()
         auth = await self.__connection.Login()
+        self.Balance = Money(auth['accountInfo']['available'], auth['currencyIsoCode'])
         self.__logger.info('{}'.format(auth))
         self.__logger.info('Scheduler created')
         return self
@@ -134,12 +139,15 @@ class Scheduler:
         await self.__client.__aexit__(*args, **kwargs)
         self.__logger.info('Scheduler destroyed')
 
-    async def BalanceCheck(self):
-        await self.__connection.Login()
-
-    def AddWorkers(self, client, store):
-        self.__client = client
-        self.__store = store
+    async def BalanceCheck(self, orders):
+        try:
+            totalPosition = reduce(lambda x, y: x+y, map(lambda x: float(x['Order']['M']['Size']['N']), orders))
+            self.__logger.info('Balance {}. Position {}. Risk {}'
+                               .format(self.Balance.Amount, totalPosition, totalPosition / self.Balance.Amount))
+            return totalPosition / self.Balance.Amount < self.AllowedRisk
+        except Exception as e:
+            self.__logger.error('BalanceCheck Error: %s' % e)
+            return False
 
     def SendEmail(self, text):
         pass
@@ -181,7 +189,7 @@ async def main(loop, logger, event):
             if record['eventName'] == 'INSERT':
                 orderId = record['dynamodb']['Keys']['OrderId']['S']
                 logger.info('New Order received OrderId: %s', orderId)
-                orders.append(record['dynamodb']['NewImage']['Order'])
+                orders.append(record['dynamodb']['NewImage'])
             else:
                 logger.info('Not INSERT event is ignored')
         if len(orders) == 0:
@@ -189,7 +197,9 @@ async def main(loop, logger, event):
             return
 
         async with Scheduler(identifier, password, url, key, logger, loop) as scheduler:
-            await scheduler.BalanceCheck()
+            if not await scheduler.BalanceCheck(orders):
+                scheduler.SendEmail('')
+                return
 
     except Exception as e:
         logger.error(e)
@@ -203,8 +213,8 @@ def lambda_handler(event, context):
     logger.info('event %s' % event)
     logger.info('context %s' % context)
 
-    if 'IG_URL' not in os.environ or 'X-IG-API-KEY' not in os.environ or \
-                    'IDENTIFIER' not in os.environ or 'PASSWORD' not in os.environ:
+    if 'IG_URL' not in os.environ or 'X-IG-API-KEY' not in os.environ or 'IDENTIFIER' not in os.environ \
+            or 'PASSWORD' not in os.environ:
         logger.error('ENVIRONMENT VARS are not set')
         return json.dumps({'State': 'ERROR'})
 

@@ -14,7 +14,7 @@ class DecimalEncoder(json.JSONEncoder):
 
 
 class Connection(object):
-    retries = 10
+    retries = 5
 
     def __init__(self):
         pass
