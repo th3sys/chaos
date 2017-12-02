@@ -14,8 +14,24 @@ class DecimalEncoder(json.JSONEncoder):
 
 
 class Connection(object):
+    retries = 10
+
     def __init__(self):
         pass
+
+    @staticmethod
+    def ioreliable(func):
+        async def _decorator(self, *args, **kwargs):
+            tries = 0
+            result = await func(self, *args, **kwargs)
+            if result is None:
+                while result is None and tries < Connection.retries:
+                    tries += 1
+                    time.sleep(2 ** tries)
+                    result = await func(self, *args, **kwargs)
+            return result
+
+        return _decorator
 
     @staticmethod
     def reliable(func):
@@ -23,7 +39,7 @@ class Connection(object):
             tries = 0
             result = func(self, *args, **kwargs)
             if result is None:
-                while result is None and tries < 10:
+                while result is None and tries < Connection.retries:
                     tries += 1
                     time.sleep(2 ** tries)
                     result = func(self, *args, **kwargs)
