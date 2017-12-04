@@ -3,9 +3,9 @@
     "OrderId" : "9fe2c4e93f654fdbb24c02b15259716c",
     "TransactionTime" : "1499723976.27",
     "Status" : "PENDING",
-    "Symbol" : "VXU7",
-    "Maturity" : "201709",
-    "ProductType" : "CFD",
+    "Symbol" : "VX",
+    "Maturity" : "201712",
+    "ProductType" : "SPREAD",
     "Broker" : "IG",
     "Order" : {
         "Side" : "BUY",

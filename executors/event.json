@@ -44,10 +44,10 @@
             "S":"IG"
           },
           "Symbol":{
-            "S":"VXZ7"
+            "S":"VX"
           },
           "ProductType":{
-            "S":"CFD"
+            "S":"SPREAD"
           },
           "Strategy":{
             "M":{

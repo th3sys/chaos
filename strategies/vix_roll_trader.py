@@ -134,7 +134,7 @@ class VixTrader(object):
                     ':st': 'PENDING',
                     ':s': symbol,
                     ':m': maturity,
-                    ':p': 'CFD',
+                    ':p': 'SPREAD',
                     ':b': 'IG',
                     ':o': order,
                     ':t': trade,
@@ -168,7 +168,7 @@ class VixTrader(object):
                              (self.__FrontFuture.Symbol, expiry))
             side = Side.Sell if self.__OpenPosition > 0 else Side.Buy
             size = abs(self.__OpenPosition)
-            self.SendOrder(symbol=self.__FrontFuture.Symbol, side=side, size=size,
+            self.SendOrder(symbol='VX', side=side, size=size,
                            maturity=expiry.strftime('%Y%m'), reason='CLOSE')
             return
 
@@ -190,7 +190,7 @@ class VixTrader(object):
                 self.Logger.warn('Exceeded MaxPosition size: %s, pos: %s' % (self.__StdSize, self.__OpenPosition))
                 return
 
-            self.SendOrder(symbol=self.__FrontFuture.Symbol, side=side, size=self.__StdSize,
+            self.SendOrder(symbol='VX', side=side, size=self.__StdSize,
                            maturity=expiry.strftime('%Y%m'), reason='OPEN')
 
     @Connection.reliable
