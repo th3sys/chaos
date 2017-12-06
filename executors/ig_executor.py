@@ -5,12 +5,11 @@ import json
 import os
 import boto3
 import logging
-from utils import Connection
+from utils import Connection, DecimalEncoder
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 import functools
 from functools import reduce
-import typing
 
 
 class Money(object):
@@ -20,26 +19,30 @@ class Money(object):
 
 
 class StoreManager(object):
-    def __init__(self, logger, orders):
+    def __init__(self, logger, loop=None):
+        self.__timeout = 10
         self.__logger = logger
-        self.__orders = orders
+        self.__loop = loop if loop is not None else asyncio.get_event_loop()
 
-    async def GetSecurities(self):
-        loop = asyncio.get_event_loop()
+    @Connection.ioreliable
+    async def GetSecurities(self, securities):
         try:
             self.__logger.info('Calling securities query ...')
-            response: typing.Mapping = \
-                await loop.run_in_executor(  # type: ignore
-                    None, functools.partial(
-                        self.__Securities.query,
-                        KeyConditionExpression=Key('Symbol').eq('VX') & Key('Broker').eq('IG')))
+            pairs = list(map(lambda x: Key('Symbol').eq(x[0]) & Key('Broker').eq(x[1]), securities))
+            keyCondition = reduce(lambda x, y: x | y, pairs) if len(pairs) > 1 else pairs[0]
+
+            with async_timeout.timeout(self.__timeout):
+                response = await self.__loop.run_in_executor(None,
+                                                             functools.partial(self.__Securities.scan,
+                                                                               FilterExpression=keyCondition))
+                return response['Items']
+
         except ClientError as e:
             self.__logger.error(e.response['Error']['Message'])
-            return 'Security', None
+            return None
         except Exception as e:
             self.__logger.error(e)
-            return 'Security', None
-        return 'Security', response['Items']
+            return None
 
     async def __aenter__(self):
         db = boto3.resource('dynamodb', region_name='us-east-1')
@@ -47,7 +50,7 @@ class StoreManager(object):
         self.__logger.info('StoreManager created')
         return self
 
-    async def __aexit__(self, typ, value, traceback):
+    async def __aexit__(self, *args, **kwargs):
         self.__logger.info('StoreManager destroyed')
 
 
@@ -126,6 +129,8 @@ class Scheduler:
         self.__loop = loop if loop is not None else asyncio.get_event_loop()
 
     async def __aenter__(self):
+        self.__store = StoreManager(self.__logger, self.__loop)
+        await self.__store.__aenter__()
         self.__client = IGClient(self.__id, self.__password, self.__url, self.__key, self.__logger, self.__loop)
         self.__connection = await self.__client.__aenter__()
         auth = await self.__connection.Login()
@@ -137,11 +142,18 @@ class Scheduler:
     async def __aexit__(self, *args, **kwargs):
         await self.__connection.Logout()
         await self.__client.__aexit__(*args, **kwargs)
+        await self.__store.__aexit__(*args, **kwargs)
         self.__logger.info('Scheduler destroyed')
+
+    async def ValidateOrders(self, orders):
+        keys = list(map(lambda x: (x['Symbol']['S'], x['Broker']['S']), orders))
+        securities = await self.__store.GetSecurities(keys)
+        self.__logger.info('Securities %s' % securities)
+        return securities
 
     async def BalanceCheck(self, orders):
         try:
-            totalPosition = reduce(lambda x, y: x+y, map(lambda x: float(x['Order']['M']['Size']['N']), orders))
+            totalPosition = reduce(lambda x, y: x + y, map(lambda x: float(x['Order']['M']['Size']['N']), orders))
             self.__logger.info('Balance {}. Position {}. Risk {}'
                                .format(self.Balance.Amount, totalPosition, totalPosition / self.Balance.Amount))
             return totalPosition / self.Balance.Amount < self.AllowedRisk
@@ -197,6 +209,12 @@ async def main(loop, logger, event):
             return
 
         async with Scheduler(identifier, password, url, key, logger, loop) as scheduler:
+            validated = list(map(lambda y: (y['Symbol'], y['Risk']['RiskFactor'], y['Risk']['MaxPosition']),
+                                 filter(lambda x: x['TradingEnabled'] is True and x['Broker'] == 'IG',
+                                        await scheduler.ValidateOrders(orders))))
+            if len(validated) == 0:
+                scheduler.SendEmail('No Valid Security Definition has been found.')
+                return
             if not await scheduler.BalanceCheck(orders):
                 scheduler.SendEmail('')
                 return
@@ -227,5 +245,5 @@ def lambda_handler(event, context):
 
 if __name__ == '__main__':
     with open("event.json") as json_file:
-        test_event = json.load(fp=json_file)
+        test_event = json.load(json_file)
         lambda_handler(test_event, None)
