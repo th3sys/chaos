@@ -5,7 +5,7 @@ import json
 import os
 import boto3
 import logging
-from utils import Connection, DecimalEncoder
+from utils import Connection
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 import functools
@@ -117,7 +117,6 @@ class IGClient:
 class Scheduler:
     def __init__(self, identifier, password, url, key, logger, loop=None):
         self.__timeout = 10
-        self.AllowedRisk = 0.01
         self.__logger = logger
         self.__id = identifier
         self.__password = password
@@ -146,17 +145,31 @@ class Scheduler:
         self.__logger.info('Scheduler destroyed')
 
     async def ValidateOrders(self, orders):
-        keys = list(map(lambda x: (x['Symbol']['S'], x['Broker']['S']), orders))
+        keys = [(x['Symbol']['S'], x['Broker']['S']) for x in orders]
         securities = await self.__store.GetSecurities(keys)
         self.__logger.info('Securities %s' % securities)
-        return securities
+        found = [(x['Symbol'], x['Risk']['RiskFactor'], x['Risk']['MaxPosition']) for x in securities
+                 if x['TradingEnabled'] is True and x['Broker'] == 'IG']
 
-    async def BalanceCheck(self, orders):
+        pending = [(x['OrderId']['S'], x['Symbol']['S'], x['Order']['M']['Size']['N']) for x
+                   in orders if x['Broker']['S'] == 'IG']
+        valid = [fOrder + pOrder for fOrder in found for pOrder in pending if fOrder[0] == pOrder[1]]
+
+        invalid = [key for key in keys if key not in map(lambda y: (y[0], 'IG'), found)]
+        return valid, invalid
+
+    def BalanceCheck(self, order):
         try:
-            totalPosition = reduce(lambda x, y: x + y, map(lambda x: float(x['Order']['M']['Size']['N']), orders))
-            self.__logger.info('Balance {}. Position {}. Risk {}'
-                               .format(self.Balance.Amount, totalPosition, totalPosition / self.Balance.Amount))
-            return totalPosition / self.Balance.Amount < self.AllowedRisk
+            symbol, riskFactor, maxPosition, orderId, symbol, size = order
+            size = float(size)
+            self.__logger.info('symbol {}, riskFactor {}, maxPosition {}, symbol {}, size {}'
+                               .format(symbol, riskFactor, maxPosition, symbol, size))
+            self.__logger.info('Balance {}, Risk {}'.format(self.Balance.Amount, size/self.Balance.Amount))
+            if size/self.Balance.Amount > riskFactor:
+                return False
+            if size > maxPosition:
+                return False
+            return True
         except Exception as e:
             self.__logger.error('BalanceCheck Error: %s' % e)
             return False
@@ -164,29 +177,8 @@ class Scheduler:
     def SendEmail(self, text):
         pass
 
-    async def RunTasks(self):
-        futures = [self.__client.Login(), self.__store.GetSecurities()]
-        done, _ = await asyncio.wait(futures, timeout=self.__timeout)
-
-        for fut in done:
-            name, payload = fut.result()
-            self.__logger.info(payload)
-            if name == 'Login' and (payload is None or 'errorCode' in payload):
-                self.SendEmail('There was a problem logging into IG')
-                return
-            if name == 'Security' and (payload is None or len(payload) != 1):
-                self.SendEmail('There was a problem getting security definition for VX')
-                return
-            if name == 'Security':
-                vix = payload[0]
-                maxPosition = vix['Risk']['MaxPosition']
-                riskFactor = vix['Risk']['RiskFactor']
-                enabled = vix['TradingEnabled']
-                self.__logger.info('MaxPosition is {}, RiskFactor is {}, Enabled {}'.format(maxPosition,
-                                                                                            riskFactor, enabled))
-            if name == 'Login':
-                funds = payload['accountInfo']['available']
-                self.__logger.info('Funds {}'.format(funds))
+    def SendOrder(self, order):
+        pass
 
 
 async def main(loop, logger, event):
@@ -209,15 +201,22 @@ async def main(loop, logger, event):
             return
 
         async with Scheduler(identifier, password, url, key, logger, loop) as scheduler:
-            validated = list(map(lambda y: (y['Symbol'], y['Risk']['RiskFactor'], y['Risk']['MaxPosition']),
-                                 filter(lambda x: x['TradingEnabled'] is True and x['Broker'] == 'IG',
-                                        await scheduler.ValidateOrders(orders))))
-            if len(validated) == 0:
+
+            valid, invalid = await scheduler.ValidateOrders(orders)
+            if len(valid) == 0:
                 scheduler.SendEmail('No Valid Security Definition has been found.')
                 return
-            if not await scheduler.BalanceCheck(orders):
-                scheduler.SendEmail('')
-                return
+
+
+            logger.info('all validated orders %s' % valid)
+            riskManaged = [order for order in valid if scheduler.BalanceCheck(order)]
+            futures = [scheduler.SendOrder(o)for o in riskManaged]
+            done, _ = await asyncio.wait(futures, timeout=scheduler.__timeout)
+
+            for fut in done:
+                name, payload = fut.result()
+
+            # email invalid, failed risk, failed, accepted
 
     except Exception as e:
         logger.error(e)

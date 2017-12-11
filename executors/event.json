@@ -1,4 +1,77 @@
 {"Records":[
+     {
+      "eventID":"f91ad880416fe134188bb1619c85dae6",
+      "eventName":"INSERT",
+      "eventVersion":"1.1",
+      "eventSource":"aws:dynamodb",
+      "awsRegion":"us-east-1",
+      "dynamodb":{
+        "ApproximateCreationDateTime":1.51211904E9,
+        "Keys":{
+          "TransactionTime":{
+            "S":"1499723976.27"
+          },
+          "OrderId":{
+            "S":"9fe2c4e93f654fdbb24c02b15259716i"
+          }
+        },
+        "NewImage":{
+          "Order":{
+            "M":{
+              "Side":{
+                "S":"BUY"
+              },
+              "Size":{
+                "N":"200"
+              },
+              "OrdType":{
+                "S":"MARKET"
+              }
+            }
+          },
+          "Status":{
+            "S":"PENDING"
+          },
+          "Trade":{
+            "M":{
+
+            }
+          },
+          "TransactionTime":{
+            "S":"1499723976.27"
+          },
+          "Broker":{
+            "S":"IG"
+          },
+          "Symbol":{
+            "S":"VX"
+          },
+          "ProductType":{
+            "S":"SPREAD"
+          },
+          "Strategy":{
+            "M":{
+              "Reason":{
+                "S":"OPEN"
+              },
+              "Name":{
+                "S":"VIX ROLL"
+              }
+            }
+          },
+          "OrderId":{
+            "S":"9fe2c4e93f654fdbb24c02b15259716c"
+          },
+          "Maturity":{
+            "S":"201712"
+          }
+        },
+        "SequenceNumber":"89871600000000015454451505",
+        "SizeBytes":273,
+        "StreamViewType":"NEW_AND_OLD_IMAGES"
+      },
+      "eventSourceARN":"arn:aws:dynamodb"
+    },
    {
       "eventID":"f91ad880416fe134188bb1619c85dae8",
       "eventName":"INSERT",
@@ -85,7 +158,7 @@
             "S":"1499723976.27"
           },
           "OrderId":{
-            "S":"9fe2c4e93f654fdbb24c02b15259716c"
+            "S":"9fe2c4e93f654fdbb24c02b15259716a"
           }
         },
         "NewImage":{
@@ -117,7 +190,7 @@
             "S":"IG"
           },
           "Symbol":{
-            "S":"VX"
+            "S":"UNKNOWN"
           },
           "ProductType":{
             "S":"SPREAD"
