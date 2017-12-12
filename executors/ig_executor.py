@@ -116,7 +116,7 @@ class IGClient:
 
 class Scheduler:
     def __init__(self, identifier, password, url, key, logger, loop=None):
-        self.__timeout = 10
+        self.Timeout = 10
         self.__logger = logger
         self.__id = identifier
         self.__password = password
@@ -166,19 +166,19 @@ class Scheduler:
                                .format(symbol, riskFactor, maxPosition, symbol, size))
             self.__logger.info('Balance {}, Risk {}'.format(self.Balance.Amount, size/self.Balance.Amount))
             if size/self.Balance.Amount > riskFactor:
-                return False
+                return orderId, False
             if size > maxPosition:
-                return False
-            return True
+                return orderId, False
+            return orderId, True
         except Exception as e:
             self.__logger.error('BalanceCheck Error: %s' % e)
-            return False
+            return 'Error', False
 
     def SendEmail(self, text):
         pass
 
-    def SendOrder(self, order):
-        pass
+    async def SendOrder(self, order):
+        return order, 'payload'
 
 
 async def main(loop, logger, event):
@@ -206,17 +206,27 @@ async def main(loop, logger, event):
             if len(valid) == 0:
                 scheduler.SendEmail('No Valid Security Definition has been found.')
                 return
-
-
             logger.info('all validated orders %s' % valid)
-            riskManaged = [order for order in valid if scheduler.BalanceCheck(order)]
-            futures = [scheduler.SendOrder(o)for o in riskManaged]
-            done, _ = await asyncio.wait(futures, timeout=scheduler.__timeout)
 
+            passRisk = [scheduler.BalanceCheck(order) for order in valid if scheduler.BalanceCheck(order)[1]]
+            failedRisk = [scheduler.BalanceCheck(order) for order in valid if not scheduler.BalanceCheck(order)[1]]
+            if len(passRisk) == 0:
+                scheduler.SendEmail('No Security has been accepted by Risk Manager.')
+                return
+            logger.info('all passRisk orders %s' % passRisk)
+
+            futures = [scheduler.SendOrder(o) for o in passRisk]
+            done, _ = await asyncio.wait(futures, timeout=scheduler.Timeout)
+
+            results = []
             for fut in done:
                 name, payload = fut.result()
+                results.append((name, payload))
 
-            # email invalid, failed risk, failed, accepted
+            text = 'Orders where definition has not been found, not enabled for trading or not IG order %s\n' % invalid
+            text += 'Orders where MaxPosition or RiskFactor in Securities table is exceeded %s\n' % failedRisk
+            text += 'The results of the trades sent to the IG REST API %s\n' % results
+            scheduler.SendEmail(text)
 
     except Exception as e:
         logger.error(e)
