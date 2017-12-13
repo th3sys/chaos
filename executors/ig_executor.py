@@ -9,7 +9,22 @@ from utils import Connection
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 import functools
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from functools import reduce
+
+
+class IGParams(object):
+    def __init__(self):
+        self.Url = ''
+        self.Key = ''
+        self.Identifier = ''
+        self.Password = ''
+        self.EAddress = ''
+        self.EUser = ''
+        self.EPassword = ''
+        self.ESmtp = ''
 
 
 class Money(object):
@@ -57,13 +72,13 @@ class StoreManager(object):
 class IGClient:
     """IG client."""
 
-    def __init__(self, identifier, password, url, key, logger, loop=None):
+    def __init__(self, params, logger, loop=None):
         self.__timeout = 10
         self.__logger = logger
-        self.__id = identifier
-        self.__password = password
-        self.__url = url
-        self.__key = key
+        self.__id = params.Identifier
+        self.__password = params.Password
+        self.__url = params.Url
+        self.__key = params.Key
         self.__tokens = None
         self.__loop = loop if loop is not None else asyncio.get_event_loop()
 
@@ -115,13 +130,10 @@ class IGClient:
 
 
 class Scheduler:
-    def __init__(self, identifier, password, url, key, logger, loop=None):
+    def __init__(self, params, logger, loop=None):
         self.Timeout = 10
         self.__logger = logger
-        self.__id = identifier
-        self.__password = password
-        self.__url = url
-        self.__key = key
+        self.__params = params
         self.__store = None
         self.Balance = None
         self.__client = None
@@ -130,7 +142,7 @@ class Scheduler:
     async def __aenter__(self):
         self.__store = StoreManager(self.__logger, self.__loop)
         await self.__store.__aenter__()
-        self.__client = IGClient(self.__id, self.__password, self.__url, self.__key, self.__logger, self.__loop)
+        self.__client = IGClient(self.__params, self.__logger, self.__loop)
         self.__connection = await self.__client.__aenter__()
         auth = await self.__connection.Login()
         self.Balance = Money(auth['accountInfo']['available'], auth['currencyIsoCode'])
@@ -175,7 +187,21 @@ class Scheduler:
             return 'Error', False
 
     def SendEmail(self, text):
-        pass
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = 'IG EXECUTOR RESULTS'
+        msg['From'] = self.__params.EAddress
+        msg['To'] = self.__params.EAddress
+        mime_text = MIMEText(text, 'html')
+        msg.attach(mime_text)
+
+        server = smtplib.SMTP(self.__params.ESmtp, 587, timeout=10)
+        server.set_debuglevel(10)
+        server.starttls()
+        server.ehlo()
+        server.login(self.__params.EUser, self.__params.EPassword)
+        server.sendmail(self.__params.EAddress,  self.__params.EAddress, msg.as_string())
+        res = server.quit()
+        self.__logger.info(res)
 
     async def SendOrder(self, order):
         return order, 'payload'
@@ -183,10 +209,15 @@ class Scheduler:
 
 async def main(loop, logger, event):
     try:
-        url = os.environ['IG_URL']
-        key = os.environ['X-IG-API-KEY']
-        identifier = os.environ['IDENTIFIER']
-        password = os.environ['PASSWORD']
+        params = IGParams()
+        params.Url = os.environ['IG_URL']
+        params.Key = os.environ['X-IG-API-KEY']
+        params.Identifier = os.environ['IDENTIFIER']
+        params.Password = os.environ['PASSWORD']
+        params.EAddress = os.environ['EMAIL_ADDRESS']
+        params.EUser = os.environ['EMAIL_USER']
+        params.EPassword = os.environ['EMAIL_PASSWORD']
+        params.ESmtp = os.environ['EMAIL_SMTP']
 
         orders = []
         for record in event['Records']:
@@ -200,7 +231,7 @@ async def main(loop, logger, event):
             logger.info('No Orders. Event is ignored')
             return
 
-        async with Scheduler(identifier, password, url, key, logger, loop) as scheduler:
+        async with Scheduler(params, logger, loop) as scheduler:
 
             valid, invalid = await scheduler.ValidateOrders(orders)
             if len(valid) == 0:
@@ -223,9 +254,10 @@ async def main(loop, logger, event):
                 name, payload = fut.result()
                 results.append((name, payload))
 
-            text = 'Orders where definition has not been found, not enabled for trading or not IG order %s\n' % invalid
-            text += 'Orders where MaxPosition or RiskFactor in Securities table is exceeded %s\n' % failedRisk
-            text += 'The results of the trades sent to the IG REST API %s\n' % results
+            text = '<br>Orders where definition has not been found, not enabled for trading or not IG order %s\n' \
+                   % invalid
+            text += '<br>Orders where MaxPosition or RiskFactor in Securities table is exceeded %s\n' % failedRisk
+            text += '<br>The results of the trades sent to the IG REST API %s\n' % results
             scheduler.SendEmail(text)
 
     except Exception as e:
@@ -241,7 +273,8 @@ def lambda_handler(event, context):
     logger.info('context %s' % context)
 
     if 'IG_URL' not in os.environ or 'X-IG-API-KEY' not in os.environ or 'IDENTIFIER' not in os.environ \
-            or 'PASSWORD' not in os.environ:
+            or 'PASSWORD' not in os.environ or 'EMAIL_ADDRESS' not in os.environ or 'EMAIL_USER' not in os.environ \
+            or 'EMAIL_PASSWORD' not in os.environ or 'EMAIL_SMTP' not in os.environ:
         logger.error('ENVIRONMENT VARS are not set')
         return json.dumps({'State': 'ERROR'})
 
