@@ -48,10 +48,18 @@ class VixTrader(object):
 
     def S3Debug(self, line):
         self.__debug.download_file('vix_roll.txt', '/tmp/vix_roll.txt')
+
+        check = open('/tmp/vix_roll.txt', 'r')
+        lines = check.readlines()
+        check.close()
+        if line in lines:
+            return False
+
         f = open('/tmp/vix_roll.txt', 'a')
         f.write(line)
         f.close()
         self.__debug.upload_file('/tmp/vix_roll.txt', 'vix_roll.txt')
+        return True
 
     def BothQuotesArrived(self):
         today = datetime.datetime.today().strftime('%Y%m%d')
@@ -179,9 +187,11 @@ class VixTrader(object):
 
         roll = (self.__FrontFuture.Close - self.__VIX.Close) / days_left
         roll = round(roll, 2)
-        self.S3Debug('%s,%s,%s,%s,%s,%s\n'
+        if not self.S3Debug('%s,%s,%s,%s,%s,%s\n'
                      % (today.strftime('%Y%m%d'), self.__FrontFuture.Symbol, self.__FrontFuture.Close,
-                        self.__VIX.Close, days_left, roll))
+                        self.__VIX.Close, days_left, roll)):
+            self.Logger.info('Already ran for %s' % symbol)
+            return
         self.Logger.info('The %s roll on %s with %s days left' % (roll, self.__FrontFuture.Symbol, days_left))
 
         if abs(roll) >= self.__MaxRoll:

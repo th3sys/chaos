@@ -10,6 +10,7 @@ from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 import functools
 import smtplib
+from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import reduce
@@ -25,6 +26,20 @@ class IGParams(object):
         self.EUser = ''
         self.EPassword = ''
         self.ESmtp = ''
+
+
+class Order(object):
+    def __init__(self, orderId, symbol, side, size, ordType, maturity, name, group, risk, maxPos):
+        self.OrderId = orderId
+        self.Side = side
+        self.Size = float(size)
+        self.OrdType = ordType
+        self.Symbol = symbol
+        self.Maturity = maturity
+        self.Name = name
+        self.MarketGroup = group
+        self.RiskFactor = risk
+        self.MaxPosition = maxPos
 
 
 class Money(object):
@@ -116,6 +131,20 @@ class IGClient:
             self.__logger.error('Login: %s, %s' % (self.__url, e))
             return None
 
+    @Connection.ioreliable
+    async def SearchMarkets(self, term):
+        try:
+            url = '%s/markets?searchTerm=%s' % (self.__url, term)
+            with async_timeout.timeout(self.__timeout):
+                self.__logger.info('Calling SearchMarkets ...')
+                response = await self.__connection.get(url=url, headers=self.__tokens)
+                self.__logger.info('SearchMarkets Response Code: {}'.format(response.status))
+                payload = await response.json()
+                return payload
+        except Exception as e:
+            self.__logger.error('SearchMarkets: %s, %s' % (self.__url, e))
+            return None
+
     async def __aenter__(self):
         connector = aiohttp.TCPConnector(verify_ssl=False)
         self.__session = aiohttp.ClientSession(loop=self.__loop, connector=connector,
@@ -160,31 +189,34 @@ class Scheduler:
         keys = [(x['Symbol']['S'], x['Broker']['S']) for x in orders]
         securities = await self.__store.GetSecurities(keys)
         self.__logger.info('Securities %s' % securities)
-        found = [(x['Symbol'], x['Risk']['RiskFactor'], x['Risk']['MaxPosition']) for x in securities
+
+        found = [(x['Symbol'], x['Description']['Name'], x['Description']['MarketGroup'],
+                  x['Risk']['RiskFactor'], x['Risk']['MaxPosition']) for x in securities
                  if x['TradingEnabled'] is True and x['Broker'] == 'IG']
 
-        pending = [(x['OrderId']['S'], x['Symbol']['S'], x['Order']['M']['Size']['N']) for x
-                   in orders if x['Broker']['S'] == 'IG']
-        valid = [fOrder + pOrder for fOrder in found for pOrder in pending if fOrder[0] == pOrder[1]]
+        pending = [(x['OrderId']['S'], x['Symbol']['S'], x['Order']['M']['Side']['S'],
+                    x['Order']['M']['Size']['N'], x['Order']['M']['OrdType']['S'], x['Maturity']['S'])
+                   for x in orders if x['Broker']['S'] == 'IG']
+
+        valid = [Order(p[0], p[1], p[2], p[3], p[4], p[5], f[1], f[2], f[3], f[4])
+                 for f in found for p in pending if f[0] == p[1]]
 
         invalid = [key for key in keys if key not in map(lambda y: (y[0], 'IG'), found)]
         return valid, invalid
 
     def BalanceCheck(self, order):
         try:
-            symbol, riskFactor, maxPosition, orderId, symbol, size = order
-            size = float(size)
-            self.__logger.info('symbol {}, riskFactor {}, maxPosition {}, symbol {}, size {}'
-                               .format(symbol, riskFactor, maxPosition, symbol, size))
-            self.__logger.info('Balance {}, Risk {}'.format(self.Balance.Amount, size/self.Balance.Amount))
-            if size/self.Balance.Amount > riskFactor:
-                return orderId, False
-            if size > maxPosition:
-                return orderId, False
-            return orderId, True
+            self.__logger.info('OrderId {}, symbol {}, riskFactor {}, risk{}, maxPosition {}, size {}'
+                    .format(order.OrderId, order.Symbol, order.RiskFactor, order.Size/self.Balance.Amount,
+                            order.MaxPosition, order.Size))
+            if order.Size/self.Balance.Amount > order.RiskFactor:
+                return order, False
+            if order.Size > order.MaxPosition:
+                return order, False
+            return order, True
         except Exception as e:
             self.__logger.error('BalanceCheck Error: %s' % e)
-            return 'Error', False
+            return order, False
 
     def SendEmail(self, text):
         msg = MIMEMultipart('alternative')
@@ -204,7 +236,11 @@ class Scheduler:
         self.__logger.info(res)
 
     async def SendOrder(self, order):
-        return order, 'payload'
+        lookup = await self.__client.SearchMarkets(order.Symbol)
+        found = [o for o in lookup['markets']
+                 if o['instrumentName'] == order.Name and o['instrumentType'] == order.MarketGroup
+                 and o['expiry'] == datetime.strptime(order.Maturity, '%Y%m').strftime('%b-%y').upper()]
+        return order, found
 
 
 async def main(loop, logger, event):
@@ -237,14 +273,14 @@ async def main(loop, logger, event):
             if len(valid) == 0:
                 scheduler.SendEmail('No Valid Security Definition has been found.')
                 return
-            logger.info('all validated orders %s' % valid)
+            logger.info('all validated orders %s' % [o.OrderId for o in valid])
 
-            passRisk = [scheduler.BalanceCheck(order) for order in valid if scheduler.BalanceCheck(order)[1]]
-            failedRisk = [scheduler.BalanceCheck(order) for order in valid if not scheduler.BalanceCheck(order)[1]]
+            passRisk = [order for order in valid if scheduler.BalanceCheck(order)[1]]
+            failedRisk = [order for order in valid if order not in passRisk]
             if len(passRisk) == 0:
                 scheduler.SendEmail('No Security has been accepted by Risk Manager.')
                 return
-            logger.info('all passRisk orders %s' % passRisk)
+            logger.info('all passRisk orders %s' % [o.OrderId for o in passRisk])
 
             futures = [scheduler.SendOrder(o) for o in passRisk]
             done, _ = await asyncio.wait(futures, timeout=scheduler.Timeout)
@@ -256,7 +292,8 @@ async def main(loop, logger, event):
 
             text = '<br>Orders where definition has not been found, not enabled for trading or not IG order %s\n' \
                    % invalid
-            text += '<br>Orders where MaxPosition or RiskFactor in Securities table is exceeded %s\n' % failedRisk
+            text += '<br>Orders where MaxPosition or RiskFactor in Securities table is exceeded %s\n' \
+                    % [o.OrderId for o in failedRisk]
             text += '<br>The results of the trades sent to the IG REST API %s\n' % results
             scheduler.SendEmail(text)
 
