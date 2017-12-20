@@ -77,7 +77,7 @@ class VixTrader(object):
 
     def GetCurrentPosition(self):
         trades = filter(lambda x: x['Status'] == 'FILLED' or x['Status'] == 'PART_FILLED',
-                        self.GetOrders(self.__FrontFuture.Symbol))
+                        self.GetOrders('VX'))
 
         today = datetime.datetime.today().date()
         expiry = self.secDef.get_next_expiry_date(symbol=Futures.VX, today=today)
