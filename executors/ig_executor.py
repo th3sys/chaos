@@ -35,7 +35,7 @@ class Order(object):
         self.Size = float(size)
         self.OrdType = ordType
         self.Symbol = symbol
-        self.Maturity = maturity
+        self.Maturity = datetime.strptime(maturity, '%Y%m').strftime('%b-%y').upper()
         self.Name = name
         self.MarketGroup = group
         self.RiskFactor = risk
@@ -239,8 +239,13 @@ class Scheduler:
         lookup = await self.__client.SearchMarkets(order.Symbol)
         found = [o for o in lookup['markets']
                  if o['instrumentName'] == order.Name and o['instrumentType'] == order.MarketGroup
-                 and o['expiry'] == datetime.strptime(order.Maturity, '%Y%m').strftime('%b-%y').upper()]
-        return order, found
+                 and o['expiry'] == order.Maturity]
+        self.__logger.info('OrderId: %s. Search for %s, %s returned %s'
+                           % (order.OrderId, order.Symbol, order.Maturity, found))
+        result = 'Found Contract on IG' \
+            if len(found) == 1 and 'epic' in found and 'expiry' in found \
+            else 'Contract for %s %s could not be found' % (order.Symbol, order.Maturity)
+        return order.OrderId, result
 
 
 async def main(loop, logger, event):
