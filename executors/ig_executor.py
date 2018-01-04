@@ -40,6 +40,8 @@ class Order(object):
         self.MarketGroup = group
         self.RiskFactor = risk
         self.MaxPosition = maxPos
+        self.Epic = ''
+        self.Ccy = ''
 
 
 class Money(object):
@@ -129,6 +131,39 @@ class IGClient:
                 return payload
         except Exception as e:
             self.__logger.error('Login: %s, %s' % (self.__url, e))
+            return None
+
+    @Connection.ioreliable
+    async def CreatePosition(self, order):
+        try:
+            url = '%s/%s' % (self.__url, 'positions/otc')
+            with async_timeout.timeout(self.__timeout):
+                request = {
+                    "epic": order.Epic,
+                    "expiry": order.Maturity,
+                    "direction": order.Side,
+                    "size": order.Size,
+                    "orderType": order.OrdType,
+                    "timeInForce": None,
+                    "level": None,
+                    "guaranteedStop": False,
+                    "stopLevel": None,
+                    "stopDistance": None,
+                    "trailingStop": None,
+                    "trailingStopIncrement": None,
+                    "forceOpen": False,
+                    "limitLevel": None,
+                    "limitDistance": None,
+                    "quoteId": order.OrderId,
+                    "currencyCode": order.Ccy
+                }
+                self.__logger.info('Calling CreatePosition ...')
+                response = await self.__connection.post(url=url, headers=self.__tokens, json=request)
+                self.__logger.info('CreatePosition Response Code: {}'.format(response.status))
+                payload = await response.json()
+                return payload
+        except Exception as e:
+            self.__logger.error('CreatePosition: %s, %s' % (self.__url, e))
             return None
 
     @Connection.ioreliable
@@ -242,9 +277,14 @@ class Scheduler:
                  and o['expiry'] == order.Maturity]
         self.__logger.info('OrderId: %s. Search for %s, %s returned %s'
                            % (order.OrderId, order.Symbol, order.Maturity, found))
-        result = 'Found Contract on IG' \
-            if len(found) == 1 and 'epic' in found and 'expiry' in found \
-            else 'Contract for %s %s could not be found' % (order.Symbol, order.Maturity)
+
+        if len(found) == 1 and 'epic' in found[0] and 'expiry' in found[0]:
+            order.Epic = found[0]['epic']
+            order.Ccy = self.Balance.Ccy
+            deal = await self.__client.CreatePosition(order)
+            result = 'Sent %s %s to IG. Received: %s' % (order.Symbol, order.Maturity, deal)
+        else:
+            result = 'Contract for %s %s could not be found' % (order.Symbol, order.Maturity)
         return order.OrderId, result
 
 
