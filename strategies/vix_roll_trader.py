@@ -28,7 +28,7 @@ class Quote(object):
 
 
 class VixTrader(object):
-    def __init__(self, logger):
+    def __init__(self, logger, today):
         self.secDef = SecurityDefinition()
         self.Logger = logger
         db = boto3.resource('dynamodb', region_name='us-east-1')
@@ -38,9 +38,10 @@ class VixTrader(object):
         s3 = boto3.resource('s3')
         debug = os.environ["DEBUG_FOLDER"]
         self.__debug = s3.Bucket(debug)
+        self.Today = today
 
         self.Logger.info('VixTrader Created')
-        self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX'))
+        self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX', today))
         self.__OpenPosition = 0
         self.__MaxRoll = 0.1
         self.__StdSize = 100
@@ -62,7 +63,7 @@ class VixTrader(object):
         return True
 
     def BothQuotesArrived(self):
-        today = datetime.datetime.today().strftime('%Y%m%d')
+        today = self.Today.strftime('%Y%m%d')
         vix = self.GetQuotes(self.__VIX.Symbol, today)
         if len(vix) > 0:
             self.__VIX.Close = vix[0]['Details']['Close']
@@ -75,12 +76,11 @@ class VixTrader(object):
             self.Logger.info('%s quote for EOD %s has arrived' % (self.__FrontFuture.Symbol, today))
         return len(vix) and len(future)
 
-    def GetCurrentPosition(self):
+    def GetCurrentPosition(self, date):
         trades = filter(lambda x: x['Status'] == 'FILLED' or x['Status'] == 'PART_FILLED',
                         self.GetOrders('VX'))
 
-        today = datetime.datetime.today().date()
-        expiry = self.secDef.get_next_expiry_date(symbol=Futures.VX, today=today)
+        expiry = self.secDef.get_next_expiry_date(symbol=Futures.VX, today=date)
         nextMonth = list(map(lambda x: x['Trade'],
                              filter(lambda x: x['Maturity'] == expiry.strftime('%Y%m'), trades)))
 
@@ -164,14 +164,15 @@ class VixTrader(object):
             self.Logger.warn('Neither spot or Front Future')
             return
 
+        date = self.Today.date()
+
         if not self.BothQuotesArrived():
             self.Logger.warn('Need both spot and future to run the strategy')
             return
 
-        today = datetime.datetime.today().date()
-        expiry = self.secDef.get_next_expiry_date(Futures.VX, today)
-        self.__OpenPosition = self.GetCurrentPosition()
-        if self.__OpenPosition != 0 and today == expiry - relativedelta(days=+1):
+        expiry = self.secDef.get_next_expiry_date(Futures.VX, date)
+        self.__OpenPosition = self.GetCurrentPosition(date)
+        if self.__OpenPosition != 0 and date == expiry - relativedelta(days=+1):
             self.Logger.warn('Close any open %s trades one day before the expiry on %s' %
                              (self.__FrontFuture.Symbol, expiry))
             side = Side.Sell if self.__OpenPosition > 0 else Side.Buy
@@ -180,15 +181,15 @@ class VixTrader(object):
                            maturity=expiry.strftime('%Y%m'), reason='CLOSE')
             return
 
-        days_left = (expiry - today).days
+        days_left = (expiry - date).days
         if days_left <= 0:
-            self.Logger.warn('Expiry in the past. Expiry: %s. Today: %s' % (expiry, today))
+            self.Logger.warn('Expiry in the past. Expiry: %s. Today: %s' % (expiry, date))
             return
 
         roll = (self.__FrontFuture.Close - self.__VIX.Close) / days_left
         roll = round(roll, 2)
         if not self.S3Debug('%s,%s,%s,%s,%s,%s\n'
-                     % (today.strftime('%Y%m%d'), self.__FrontFuture.Symbol, self.__FrontFuture.Close,
+                     % (date.strftime('%Y%m%d'), self.__FrontFuture.Symbol, self.__FrontFuture.Close,
                         self.__VIX.Close, days_left, roll)):
             self.Logger.info('Already ran for %s' % symbol)
             return
@@ -265,9 +266,11 @@ def main(event, context):
     try:
         for record in event['Records']:
             if record['eventName'] == 'INSERT':
+                t = record['dynamodb']['Keys']['Date']['S']
+                today = datetime.datetime.strptime(t, '%Y%m%d')
                 symbol = record['dynamodb']['Keys']['Symbol']['S']
                 logger.info('New Quote received Symbol: %s', symbol)
-                vix = VixTrader(logger)
+                vix = VixTrader(logger, today)
                 vix.Run(symbol)
             else:
                 logger.info('Not INSERT event is ignored')

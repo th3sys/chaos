@@ -82,8 +82,7 @@ class SecurityDefinition(object):
             self.Logger.error(e)
             return None
 
-    def get_front_month_future(self, symbol):
-        today = datetime.datetime.today().date()
+    def get_front_month_future(self, symbol, today):
         return self.get_next_expiry(symbol, today)
 
     def get_futures(self, symbol, n, date=None):
