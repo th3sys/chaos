@@ -41,7 +41,7 @@ class VixTrader(object):
         self.Today = today
 
         self.Logger.info('VixTrader Created')
-        self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX', today))
+        self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX', today.date()))
         self.__OpenPosition = 0
         self.__MaxRoll = 0.1
         self.__StdSize = 100
