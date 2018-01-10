@@ -12,7 +12,6 @@ from functools import reduce
 import uuid
 import time
 import os
-import math
 
 
 class Side:
@@ -40,7 +39,6 @@ class VixTrader(object):
         self.__debug = s3.Bucket(debug)
         self.Today = today
 
-        self.Logger.info('VixTrader Created')
         self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX', today.date()))
         self.__OpenPosition = 0
         self.__MaxRoll = 0.1
@@ -172,6 +170,8 @@ class VixTrader(object):
 
         expiry = self.secDef.get_next_expiry_date(Futures.VX, date)
         self.__OpenPosition = self.GetCurrentPosition(date)
+        self.Logger.info('Found VX open position. Maturity %s. Size %s'
+                         % (expiry.strftime('%Y%m'), self.__OpenPosition))
         if self.__OpenPosition != 0 and date == expiry - relativedelta(days=+1):
             self.Logger.warn('Close any open %s trades one day before the expiry on %s' %
                              (self.__FrontFuture.Symbol, expiry))
