@@ -14,6 +14,13 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import reduce
+import copy
+
+
+class OrderStatus(object):
+    Filled = 'FILLED'
+    Pending = 'PENDING'
+    Failed = 'FAILED'
 
 
 class IGParams(object):
@@ -29,8 +36,9 @@ class IGParams(object):
 
 
 class Order(object):
-    def __init__(self, orderId, symbol, side, size, ordType, maturity, name, group, risk, maxPos):
+    def __init__(self, orderId, transactionTime, symbol, side, size, ordType, maturity, name, group, risk, maxPos):
         self.OrderId = orderId
+        self.TransactionTime = transactionTime
         self.Side = side
         self.Size = float(size)
         self.OrdType = ordType
@@ -42,6 +50,10 @@ class Order(object):
         self.MaxPosition = maxPos
         self.Epic = ''
         self.Ccy = ''
+        self.FillTime = None
+        self.FillPrice = None
+        self.FillSize = None
+        self.Status = OrderStatus.Pending
 
 
 class Money(object):
@@ -55,6 +67,46 @@ class StoreManager(object):
         self.__timeout = 10
         self.__logger = logger
         self.__loop = loop if loop is not None else asyncio.get_event_loop()
+
+    def UpdateStatus(self, order):
+        update = 'UpdateStatus: '
+        try:
+            trade = {
+              "FillTime": order.FillTime,
+              "Side": order.Side,
+              "FilledSize": order.FillSize,
+              "Price": order.FillPrice
+            }
+            response = self.__Orders.update_item(
+                Key={
+                    'OrderId': order.OrderId,
+                    'TransactionTime': order.TransactionTime,
+                },
+                UpdateExpression="set #s = :s, Trade = :t",
+                ConditionExpression="#s = :p",
+                ExpressionAttributeNames={
+                    '#s': 'Status'
+                },
+                ExpressionAttributeValues={
+                    ':s': order.Status,
+                    ':t': trade,
+                    ':p': 'PENDING'
+                },
+                ReturnValues="UPDATED_NEW")
+            update += response['Attributes']
+
+        except ClientError as e:
+            self.__logger.error(e.response['Error']['Message'])
+            update += e.response['Error']['Message']
+        except Exception as e:
+            self.__logger.error(e)
+            update += e
+        else:
+            update += ". UpdateItem succeeded."
+            self.__logger.info(response)
+
+        self.__logger.info('Update: %s', update)
+        return update
 
     @Connection.ioreliable
     async def GetSecurities(self, securities):
@@ -79,6 +131,7 @@ class StoreManager(object):
     async def __aenter__(self):
         db = boto3.resource('dynamodb', region_name='us-east-1')
         self.__Securities = db.Table('Securities')
+        self.__Orders = db.Table('Orders')
         self.__logger.info('StoreManager created')
         return self
 
@@ -144,7 +197,7 @@ class IGClient:
                     "direction": order.Side,
                     "size": order.Size,
                     "orderType": order.OrdType,
-                    "timeInForce": None,
+                    "timeInForce": "FILL_OR_KILL",
                     "level": None,
                     "guaranteedStop": False,
                     "stopLevel": None,
@@ -158,12 +211,42 @@ class IGClient:
                     "currencyCode": order.Ccy
                 }
                 self.__logger.info('Calling CreatePosition ...')
-                response = await self.__connection.post(url=url, headers=self.__tokens, json=request)
+                tokens = copy.deepcopy(self.__tokens)
+                tokens['Version'] = "2"
+                response = await self.__connection.post(url=url, headers=tokens, json=request)
                 self.__logger.info('CreatePosition Response Code: {}'.format(response.status))
                 payload = await response.json()
                 return payload
         except Exception as e:
             self.__logger.error('CreatePosition: %s, %s' % (self.__url, e))
+            return None
+
+    @Connection.ioreliable
+    async def GetPositions(self):
+        try:
+            url = '%s/positions' % self.__url
+            with async_timeout.timeout(self.__timeout):
+                self.__logger.info('Calling GetPositions ...')
+                response = await self.__connection.get(url=url, headers=self.__tokens)
+                self.__logger.info('GetPositions Response Code: {}'.format(response.status))
+                payload = await response.json()
+                return payload
+        except Exception as e:
+            self.__logger.error('GetPositions: %s, %s' % (self.__url, e))
+            return None
+
+    @Connection.ioreliable
+    async def GetPosition(self, dealId):
+        try:
+            url = '%s/positions/%s' % (self.__url, dealId)
+            with async_timeout.timeout(self.__timeout):
+                self.__logger.info('Calling GetPosition ...')
+                response = await self.__connection.get(url=url, headers=self.__tokens)
+                self.__logger.info('GetPosition Response Code: {}'.format(response.status))
+                payload = await response.json()
+                return payload
+        except Exception as e:
+            self.__logger.error('GetPosition: %s, %s' % (self.__url, e))
             return None
 
     @Connection.ioreliable
@@ -229,12 +312,12 @@ class Scheduler:
                   x['Risk']['RiskFactor'], x['Risk']['MaxPosition']) for x in securities
                  if x['TradingEnabled'] is True and x['Broker'] == 'IG']
 
-        pending = [(x['OrderId']['S'], x['Symbol']['S'], x['Order']['M']['Side']['S'],
+        pending = [(x['OrderId']['S'], x['TransactionTime']['S'], x['Symbol']['S'], x['Order']['M']['Side']['S'],
                     x['Order']['M']['Size']['N'], x['Order']['M']['OrdType']['S'], x['Maturity']['S'])
                    for x in orders if x['Broker']['S'] == 'IG']
 
-        valid = [Order(p[0], p[1], p[2], p[3], p[4], p[5], f[1], f[2], f[3], f[4])
-                 for f in found for p in pending if f[0] == p[1]]
+        valid = [Order(p[0], p[1], p[2], p[3], p[4], p[5], p[6], f[1], f[2], f[3], f[4])
+                 for f in found for p in pending if f[0] == p[2]]
 
         invalid = [key for key in keys if key not in map(lambda y: (y[0], 'IG'), found)]
         return valid, invalid
@@ -271,21 +354,42 @@ class Scheduler:
         self.__logger.info(res)
 
     async def SendOrder(self, order):
-        lookup = await self.__client.SearchMarkets(order.Symbol)
-        found = [o for o in lookup['markets']
-                 if o['instrumentName'] == order.Name and o['instrumentType'] == order.MarketGroup
-                 and o['expiry'] == order.Maturity]
-        self.__logger.info('OrderId: %s. Search for %s, %s returned %s'
-                           % (order.OrderId, order.Symbol, order.Maturity, found))
+        try:
+            lookup = await self.__client.SearchMarkets(order.Symbol)
+            contract = [o for o in lookup['markets']
+                     if o['instrumentName'] == order.Name and o['instrumentType'] == order.MarketGroup
+                     and o['expiry'] == order.Maturity]
+            self.__logger.info('OrderId: %s. Search for %s, %s returned %s'
+                               % (order.OrderId, order.Symbol, order.Maturity, contract))
 
-        if len(found) == 1 and 'epic' in found[0] and 'expiry' in found[0]:
-            order.Epic = found[0]['epic']
-            order.Ccy = self.Balance.Ccy
-            deal = await self.__client.CreatePosition(order)
-            result = 'Sent %s %s to IG. Received: %s' % (order.Symbol, order.Maturity, deal)
-        else:
-            result = 'Contract for %s %s could not be found' % (order.Symbol, order.Maturity)
-        return order.OrderId, result
+            if len(contract) == 1 and 'epic' in contract[0] and 'expiry' in contract[0]:
+                order.Epic = contract[0]['epic']
+                order.Ccy = self.Balance.Ccy
+                deal = await self.__client.CreatePosition(order)
+                self.__logger.info('OrderId: %s. CreatePosition: %s' % (order.OrderId, deal))
+                result = 'Sent %s %s to IG. Received: %s. ' % (order.Symbol, order.Maturity, deal)
+                if 'errorCode' in deal:
+                    return order.OrderId, result
+
+                positions = await self.__client.GetPositions()
+                self.__logger.info('GetPositions: %s' % positions)
+                fill = [p['position'] for p in positions['positions']
+                       if p['position']['dealReference'] == deal.dealReference]
+                if len(fill) == 1:
+                    order.FillTime = fill[0]['createdDateUTC']
+                    order.FillPrice = fill[0]['level']
+                    order.FillSize = fill[0]['size']
+                    update = await  self.__store.UpdateStatus(order)
+                    result += update
+                else:
+                    result += 'DealReference: %s. Position not found and Order not updated. ' % deal
+            else:
+                result = 'Contract for %s %s could not be found' % (order.Symbol, order.Maturity)
+            return order.OrderId, result
+
+        except Exception as e:
+            self.__logger.error('SendOrder Error: %s' % e)
+            return order.OrderId, 'There was critical exception processing Order: %s' % order.OrderId
 
 
 async def main(loop, logger, event):
