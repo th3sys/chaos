@@ -169,18 +169,6 @@ class VixTrader(object):
             return
 
         expiry = self.secDef.get_next_expiry_date(Futures.VX, date)
-        self.__OpenPosition = self.GetCurrentPosition(date)
-        self.Logger.info('Found VX open position. Maturity %s. Size %s'
-                         % (expiry.strftime('%Y%m'), self.__OpenPosition))
-        if self.__OpenPosition != 0 and date == expiry - relativedelta(days=+1):
-            self.Logger.warn('Close any open %s trades one day before the expiry on %s' %
-                             (self.__FrontFuture.Symbol, expiry))
-            side = Side.Sell if self.__OpenPosition > 0 else Side.Buy
-            size = abs(self.__OpenPosition)
-            self.SendOrder(symbol='VX', side=side, size=size,
-                           maturity=expiry.strftime('%Y%m'), reason='CLOSE')
-            return
-
         days_left = (expiry - date).days
         if days_left <= 0:
             self.Logger.warn('Expiry in the past. Expiry: %s. Today: %s' % (expiry, date))
@@ -194,6 +182,18 @@ class VixTrader(object):
             self.Logger.info('Already ran for %s' % symbol)
             return
         self.Logger.info('The %s roll on %s with %s days left' % (roll, self.__FrontFuture.Symbol, days_left))
+
+        self.__OpenPosition = self.GetCurrentPosition(date)
+        self.Logger.info('Found VX open position. Maturity %s. Size %s'
+                         % (expiry.strftime('%Y%m'), self.__OpenPosition))
+        if self.__OpenPosition != 0 and date == expiry - relativedelta(days=+1):
+            self.Logger.warn('Close any open %s trades one day before the expiry on %s' %
+                             (self.__FrontFuture.Symbol, expiry))
+            side = Side.Sell if self.__OpenPosition > 0 else Side.Buy
+            size = abs(self.__OpenPosition)
+            self.SendOrder(symbol='VX', side=side, size=size,
+                           maturity=expiry.strftime('%Y%m'), reason='CLOSE')
+            return
 
         if abs(roll) >= self.__MaxRoll:
             side = Side.Sell if (self.__FrontFuture.Close - self.__VIX.Close) >= 0 else Side.Buy
