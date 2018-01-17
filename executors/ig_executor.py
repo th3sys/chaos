@@ -5,16 +5,17 @@ import json
 import os
 import boto3
 import logging
-from utils import Connection
 from botocore.exceptions import ClientError
 from boto3.dynamodb.conditions import Key
 import functools
 import smtplib
+from utils import Connection
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import reduce
 import copy
+import decimal
 
 
 class OrderStatus(object):
@@ -71,12 +72,16 @@ class StoreManager(object):
     def UpdateStatus(self, order):
         update = 'UpdateStatus: '
         try:
-            trade = {
-              "FillTime": order.FillTime,
-              "Side": order.Side,
-              "FilledSize": order.FillSize,
-              "Price": order.FillPrice
-            }
+            if order.Status == OrderStatus.Filled:
+                trade = {
+                  "FillTime": order.FillTime,
+                  "Side": order.Side,
+                  "FilledSize": decimal.Decimal(str(order.FillSize)),
+                  "Price": decimal.Decimal(str(order.FillPrice))
+                }
+            if order.Status == OrderStatus.Failed:
+                trade = {}
+
             response = self.__Orders.update_item(
                 Key={
                     'OrderId': order.OrderId,
@@ -93,7 +98,7 @@ class StoreManager(object):
                     ':p': 'PENDING'
                 },
                 ReturnValues="UPDATED_NEW")
-            update += response['Attributes']
+            update += '%s' % response['Attributes']
 
         except ClientError as e:
             self.__logger.error(e.response['Error']['Message'])
@@ -192,23 +197,23 @@ class IGClient:
             url = '%s/%s' % (self.__url, 'positions/otc')
             with async_timeout.timeout(self.__timeout):
                 request = {
+                    "currencyCode": order.Ccy,
+                    "direction": order.Side,
                     "epic": order.Epic,
                     "expiry": order.Maturity,
-                    "direction": order.Side,
-                    "size": order.Size,
-                    "orderType": order.OrdType,
-                    "timeInForce": "FILL_OR_KILL",
-                    "level": None,
+                    "forceOpen": False,
                     "guaranteedStop": False,
-                    "stopLevel": None,
+                    "level": None,
+                    "limitDistance": None,
+                    "limitLevel": None,
+                    "orderType": order.OrdType,
+                    "quoteId": None,
+                    "size": order.Size,
                     "stopDistance": None,
+                    "stopLevel": None,
+                    "timeInForce": "FILL_OR_KILL",
                     "trailingStop": None,
                     "trailingStopIncrement": None,
-                    "forceOpen": False,
-                    "limitLevel": None,
-                    "limitDistance": None,
-                    "quoteId": order.OrderId,
-                    "currencyCode": order.Ccy
                 }
                 self.__logger.info('Calling CreatePosition ...')
                 tokens = copy.deepcopy(self.__tokens)
@@ -227,7 +232,9 @@ class IGClient:
             url = '%s/positions' % self.__url
             with async_timeout.timeout(self.__timeout):
                 self.__logger.info('Calling GetPositions ...')
-                response = await self.__connection.get(url=url, headers=self.__tokens)
+                tokens = copy.deepcopy(self.__tokens)
+                tokens['Version'] = "2"
+                response = await self.__connection.get(url=url, headers=tokens)
                 self.__logger.info('GetPositions Response Code: {}'.format(response.status))
                 payload = await response.json()
                 return payload
@@ -345,7 +352,7 @@ class Scheduler:
         msg.attach(mime_text)
 
         server = smtplib.SMTP(self.__params.ESmtp, 587, timeout=10)
-        server.set_debuglevel(10)
+        # server.set_debuglevel(10)
         server.starttls()
         server.ehlo()
         server.login(self.__params.EUser, self.__params.EPassword)
@@ -374,15 +381,18 @@ class Scheduler:
                 positions = await self.__client.GetPositions()
                 self.__logger.info('GetPositions: %s' % positions)
                 fill = [p['position'] for p in positions['positions']
-                       if p['position']['dealReference'] == deal.dealReference]
+                       if p['position']['dealReference'] == deal['dealReference']]
                 if len(fill) == 1:
                     order.FillTime = fill[0]['createdDateUTC']
                     order.FillPrice = fill[0]['level']
                     order.FillSize = fill[0]['size']
-                    update = await  self.__store.UpdateStatus(order)
+                    order.Status = OrderStatus.Filled
+                    update = self.__store.UpdateStatus(order)
                     result += update
                 else:
-                    result += 'DealReference: %s. Position not found and Order not updated. ' % deal
+                    order.Status = OrderStatus.Failed
+                    update = self.__store.UpdateStatus(order)
+                    result += 'Order Failed. %s' % update
             else:
                 result = 'Contract for %s %s could not be found' % (order.Symbol, order.Maturity)
             return order.OrderId, result
