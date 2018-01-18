@@ -406,7 +406,7 @@ async def main(loop, logger, event):
     try:
         params = IGParams()
         params.Url = os.environ['IG_URL']
-        params.Key = os.environ['X-IG-API-KEY']
+        params.Key = os.environ['X_IG_API_KEY']
         params.Identifier = os.environ['IDENTIFIER']
         params.Password = os.environ['PASSWORD']
         params.EAddress = os.environ['EMAIL_ADDRESS']
@@ -468,7 +468,7 @@ def lambda_handler(event, context):
     logger.info('event %s' % event)
     logger.info('context %s' % context)
 
-    if 'IG_URL' not in os.environ or 'X-IG-API-KEY' not in os.environ or 'IDENTIFIER' not in os.environ \
+    if 'IG_URL' not in os.environ or 'X_IG_API_KEY' not in os.environ or 'IDENTIFIER' not in os.environ \
             or 'PASSWORD' not in os.environ or 'EMAIL_ADDRESS' not in os.environ or 'EMAIL_USER' not in os.environ \
             or 'EMAIL_PASSWORD' not in os.environ or 'EMAIL_SMTP' not in os.environ:
         logger.error('ENVIRONMENT VARS are not set')
