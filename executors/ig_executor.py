@@ -476,7 +476,6 @@ def lambda_handler(event, context):
 
     app_loop = asyncio.get_event_loop()
     app_loop.run_until_complete(main(app_loop, logger, event))
-    app_loop.close()
 
     return json.dumps({'State': 'OK'})
 
