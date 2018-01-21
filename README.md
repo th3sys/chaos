@@ -1,2 +1,2 @@
-# chaos
+# CHAOS
 Distributed Trading Platform
