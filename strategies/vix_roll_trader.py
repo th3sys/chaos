@@ -31,9 +31,9 @@ class VixTrader(object):
         self.secDef = SecurityDefinition()
         self.Logger = logger
         db = boto3.resource('dynamodb', region_name='us-east-1')
-        self.__QuotesEod = db.Table('Quotes.EOD')
-        self.__Securities = db.Table('Securities')
-        self.__Orders = db.Table('Orders')
+        self.__QuotesEod = db.Table(os.environ['QUOTES_TABLE'])
+        self.__Securities = db.Table(os.environ['SECURITIES_TABLE'])
+        self.__Orders = db.Table(os.environ['ORDERS_TABLE'])
         s3 = boto3.resource('s3')
         debug = os.environ["DEBUG_FOLDER"]
         self.__debug = s3.Bucket(debug)
@@ -46,18 +46,19 @@ class VixTrader(object):
         self.__VIX = Quote('VIX')
 
     def S3Debug(self, line):
-        self.__debug.download_file('vix_roll.txt', '/tmp/vix_roll.txt')
+        file = os.environ['ROLL_FILE']
+        self.__debug.download_file(file, '/tmp/%s' % file)
 
-        check = open('/tmp/vix_roll.txt', 'r')
+        check = open('/tmp/%s' % file, 'r')
         lines = check.readlines()
         check.close()
         if line in lines:
             return False
 
-        f = open('/tmp/vix_roll.txt', 'a')
+        f = open('/tmp/%s' % file, 'a')
         f.write(line)
         f.close()
-        self.__debug.upload_file('/tmp/vix_roll.txt', 'vix_roll.txt')
+        self.__debug.upload_file('/tmp/%s' % file, file)
         return True
 
     def BothQuotesArrived(self):
@@ -261,6 +262,14 @@ def main(event, context):
 
     logger.info('event %s' % event)
     logger.info('context %s' % context)
+
+    if 'IG_URL' not in os.environ or 'EMAIL_USER' not in os.environ or 'SECURITIES_TABLE' not in os.environ \
+            or 'ORDERS_TABLE' not in os.environ or 'ROLL_FILE' not in os.environ or 'PASSWORD' not in os.environ \
+            or 'EMAIL_ADDRESS' not in os.environ or 'X_IG_API_KEY' not in os.environ \
+            or 'QUOTES_TABLE' not in os.environ or 'EMAIL_PASSWORD' not in os.environ \
+            or 'IDENTIFIER' not in os.environ or 'EMAIL_SMTP' not in os.environ:
+        logger.error('ENVIRONMENT VARS are not set')
+        return json.dumps({'State': 'ERROR'})
 
     response = {'State': 'OK'}
     try:
