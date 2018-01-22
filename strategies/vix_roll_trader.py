@@ -263,11 +263,8 @@ def main(event, context):
     logger.info('event %s' % event)
     logger.info('context %s' % context)
 
-    if 'IG_URL' not in os.environ or 'EMAIL_USER' not in os.environ or 'SECURITIES_TABLE' not in os.environ \
-            or 'ORDERS_TABLE' not in os.environ or 'ROLL_FILE' not in os.environ or 'PASSWORD' not in os.environ \
-            or 'EMAIL_ADDRESS' not in os.environ or 'X_IG_API_KEY' not in os.environ \
-            or 'QUOTES_TABLE' not in os.environ or 'EMAIL_PASSWORD' not in os.environ \
-            or 'IDENTIFIER' not in os.environ or 'EMAIL_SMTP' not in os.environ:
+    if 'SECURITIES_TABLE' not in os.environ or 'ORDERS_TABLE' not in os.environ or 'ROLL_FILE' not in os.environ \
+            or 'QUOTES_TABLE' not in os.environ or 'DEBUG_FOLDER' not in os.environ:
         logger.error('ENVIRONMENT VARS are not set')
         return json.dumps({'State': 'ERROR'})
 
