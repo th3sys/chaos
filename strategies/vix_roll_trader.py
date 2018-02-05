@@ -31,6 +31,7 @@ class VixTrader(object):
         self.secDef = SecurityDefinition()
         self.Logger = logger
         db = boto3.resource('dynamodb', region_name='us-east-1')
+        self.__isTest = bool(os.environ['BACK_TEST'])
         self.__QuotesEod = db.Table(os.environ['QUOTES_TABLE'])
         self.__Securities = db.Table(os.environ['SECURITIES_TABLE'])
         self.__Orders = db.Table(os.environ['ORDERS_TABLE'])
@@ -115,7 +116,18 @@ class VixTrader(object):
                 "Size": decimal.Decimal(str(size)),
                 "OrdType": "MARKET"
             }
-            trade = {}
+
+            # assume immediate fill on test
+            if self.__isTest:
+                trade = {
+                      "FillTime": str(time.time()),
+                      "Side": side,
+                      "FilledSize": decimal.Decimal(str(size)),
+                      "Price": decimal.Decimal(str(self.__FrontFuture.Close))
+                    }
+            else:
+                trade = {}
+
             strategy = {
                 "Name": "VIX ROLL",
                 "Reason": reason
@@ -264,7 +276,7 @@ def main(event, context):
     logger.info('context %s' % context)
 
     if 'SECURITIES_TABLE' not in os.environ or 'ORDERS_TABLE' not in os.environ or 'ROLL_FILE' not in os.environ \
-            or 'QUOTES_TABLE' not in os.environ or 'DEBUG_FOLDER' not in os.environ:
+            or 'QUOTES_TABLE' not in os.environ or 'DEBUG_FOLDER' not in os.environ or 'BACK_TEST' not in os.environ:
         logger.error('ENVIRONMENT VARS are not set')
         return json.dumps({'State': 'ERROR'})
 
