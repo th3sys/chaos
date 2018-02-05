@@ -118,6 +118,7 @@ class VixTrader(object):
             }
 
             # assume immediate fill on test
+            state = 'FILLED' if self.__isTest else 'PENDING'
             if self.__isTest:
                 trade = {
                       "FillTime": str(time.time()),
@@ -150,7 +151,7 @@ class VixTrader(object):
                     '#str': 'Strategy'
                 },
                 ExpressionAttributeValues={
-                    ':st': 'PENDING',
+                    ':st': state,
                     ':s': symbol,
                     ':m': maturity,
                     ':p': 'SPREAD',
