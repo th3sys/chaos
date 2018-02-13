@@ -209,6 +209,10 @@ class VixTrader(object):
                            maturity=expiry.strftime('%Y%m'), reason='CLOSE')
             return
 
+        if days_left <= 1:
+            self.Logger.warn('Only reduce positions in the future so close to expiry: %s %s' % (expiry, date))
+            return
+
         if abs(roll) >= self.__MaxRoll:
             side = Side.Sell if (self.__FrontFuture.Close - self.__VIX.Close) >= 0 else Side.Buy
             if self.IsExceeded(side=side, quantity=self.__StdSize, position=self.__OpenPosition):

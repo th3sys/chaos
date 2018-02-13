@@ -103,3 +103,5 @@ ENV/
 pip-selfcheck.json
 release
 include
+.RData
+.Rhistory
