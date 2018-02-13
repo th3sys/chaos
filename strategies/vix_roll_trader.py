@@ -31,7 +31,7 @@ class VixTrader(object):
         self.secDef = SecurityDefinition()
         self.Logger = logger
         db = boto3.resource('dynamodb', region_name='us-east-1')
-        self.__isTest = bool(os.environ['BACK_TEST'])
+        self.__isTest = False if os.environ['BACK_TEST'] == 'False' else True
         self.__QuotesEod = db.Table(os.environ['QUOTES_TABLE'])
         self.__Securities = db.Table(os.environ['SECURITIES_TABLE'])
         self.__Orders = db.Table(os.environ['ORDERS_TABLE'])
