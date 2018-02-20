@@ -31,6 +31,9 @@ class VixTrader(object):
         self.secDef = SecurityDefinition()
         self.Logger = logger
         db = boto3.resource('dynamodb', region_name='us-east-1')
+        self.__isStopAttached = 'STOP_DISTANCE' in os.environ
+        self.__stop = 0 if not self.__isStopAttached else int(os.environ['STOP_DISTANCE'])
+
         self.__isTest = False if os.environ['BACK_TEST'] == 'False' else True
         self.__QuotesEod = db.Table(os.environ['QUOTES_TABLE'])
         self.__Securities = db.Table(os.environ['SECURITIES_TABLE'])
@@ -78,7 +81,7 @@ class VixTrader(object):
 
     def GetCurrentPosition(self, date):
         trades = filter(lambda x: x['Status'] == 'FILLED' or x['Status'] == 'PART_FILLED',
-                        self.GetOrders('VX'))
+                        self.GetOrders('VX', 'IG'))
 
         expiry = self.secDef.get_next_expiry_date(symbol=Futures.VX, today=date)
         nextMonth = list(map(lambda x: x['Trade'],
@@ -100,6 +103,10 @@ class VixTrader(object):
         if vix is None or len(vix) == 0:
             self.Logger.error('No VX in security definition table')
             return True
+        if not vix[0]['TradingEnabled']:
+            self.Logger.error('Trading disabled for VX in security definition table')
+            return True
+
         maxPosition = vix[0]['Risk']['MaxPosition']
         self.Logger.info('MaxPosition is %s' % maxPosition)
         if side == Side.Buy and maxPosition < position + quantity:
@@ -111,11 +118,20 @@ class VixTrader(object):
 
     def SendOrder(self, symbol, maturity, side, size, reason):
         try:
-            order = {
-                "Side": side,
-                "Size": decimal.Decimal(str(size)),
-                "OrdType": "MARKET"
-            }
+
+            if self.__isStopAttached:
+                order = {
+                    "Side": side,
+                    "Size": decimal.Decimal(str(size)),
+                    "OrdType": "MARKET",
+                    "StopDistance": decimal.Decimal(str(self.__stop)),
+                }
+            else:
+                order = {
+                    "Side": side,
+                    "Size": decimal.Decimal(str(size)),
+                    "OrdType": "MARKET"
+                }
 
             # assume immediate fill on test
             state = 'FILLED' if self.__isTest else 'PENDING'
@@ -190,11 +206,13 @@ class VixTrader(object):
 
         roll = (self.__FrontFuture.Close - self.__VIX.Close) / days_left
         roll = round(roll, 2)
+
         if not self.S3Debug('%s,%s,%s,%s,%s,%s\n'
                      % (date.strftime('%Y%m%d'), self.__FrontFuture.Symbol, self.__FrontFuture.Close,
                         self.__VIX.Close, days_left, roll)):
             self.Logger.info('Already ran for %s' % symbol)
             return
+
         self.Logger.info('The %s roll on %s with %s days left' % (roll, self.__FrontFuture.Symbol, days_left))
 
         self.__OpenPosition = self.GetCurrentPosition(date)
@@ -239,10 +257,10 @@ class VixTrader(object):
                 return response['Items']
 
     @Connection.reliable
-    def GetOrders(self, symbol):
+    def GetOrders(self, symbol, broker):
         try:
-            self.Logger.info('Calling orders scan attr: %s' % symbol)
-            response = self.__Orders.scan(FilterExpression=Attr('Symbol').eq(symbol))
+            self.Logger.info('Calling orders scan attr: %s %s' % (symbol, broker))
+            response = self.__Orders.scan(FilterExpression=Attr('Symbol').eq(symbol) & Attr('Broker').eq(broker))
 
         except ClientError as e:
             self.Logger.error(e.response['Error']['Message'])
