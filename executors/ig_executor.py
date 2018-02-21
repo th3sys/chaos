@@ -6,7 +6,7 @@ import os
 import boto3
 import logging
 from botocore.exceptions import ClientError
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Key, Attr
 import functools
 import smtplib
 from utils import Connection
@@ -16,6 +16,11 @@ from email.mime.text import MIMEText
 from functools import reduce
 import copy
 import decimal
+
+
+class Side:
+    Buy = 'BUY'
+    Sell = 'SELL'
 
 
 class OrderStatus(object):
@@ -45,6 +50,7 @@ class Order(object):
         self.OrdType = ordType
         self.Symbol = symbol
         self.Maturity = datetime.strptime(maturity, '%Y%m').strftime('%b-%y').upper()
+        self.YearMonth = maturity
         self.Name = name
         self.MarketGroup = group
         self.RiskFactor = risk
@@ -55,6 +61,7 @@ class Order(object):
         self.FillPrice = None
         self.FillSize = None
         self.Status = OrderStatus.Pending
+        self.BrokerReferenceId = ''
 
 
 class Money(object):
@@ -77,7 +84,8 @@ class StoreManager(object):
                   "FillTime": order.FillTime,
                   "Side": order.Side,
                   "FilledSize": decimal.Decimal(str(order.FillSize)),
-                  "Price": decimal.Decimal(str(order.FillPrice))
+                  "Price": decimal.Decimal(str(order.FillPrice)),
+                  "Broker": {"Name": "IG", "RefType": "dealId", "Ref": order.BrokerReferenceId}
                 }
             if order.Status == OrderStatus.Failed:
                 trade = {}
@@ -112,6 +120,41 @@ class StoreManager(object):
 
         self.__logger.info('Update: %s', update)
         return update
+
+    @Connection.reliable
+    def GetOrders(self, symbol, broker):
+        try:
+            self.__logger.info('Calling orders scan attr: %s %s' % (symbol, broker))
+            response = self.__Orders.scan(FilterExpression=Attr('Symbol').eq(symbol) & Attr('Broker').eq(broker))
+
+        except ClientError as e:
+            self.__logger.error(e.response['Error']['Message'])
+            return None
+        except Exception as e:
+            self.__logger.error(e)
+            return None
+        else:
+            if 'Items' in response:
+                return response['Items']
+
+    @Connection.reliable
+    def GetCurrentPosition(self, date, symbol):
+        trades = filter(lambda x: x['Status'] == 'FILLED' or x['Status'] == 'PART_FILLED',
+                        self.GetOrders(symbol, 'IG'))
+
+        nextMonth = list(map(lambda x: x['Trade'],
+                             filter(lambda x: x['Maturity'] == date, trades)))
+
+        if len(nextMonth) == 0:
+            self.__logger.info('No open positions have been found')
+            return 0
+
+        long = reduce(lambda x, y: x + y,
+                      map(lambda x: x['FilledSize'], filter(lambda x: x['Side'] == 'BUY', nextMonth)), 0)
+        short = reduce(lambda x, y: x + y,
+                       map(lambda x: x['FilledSize'], filter(lambda x: x['Side'] == 'SELL', nextMonth)), 0)
+
+        return long - short
 
     @Connection.ioreliable
     async def GetSecurities(self, securities):
@@ -338,6 +381,12 @@ class Scheduler:
                 return order, False
             if order.Size > order.MaxPosition:
                 return order, False
+
+            position = self.__store.GetCurrentPosition(order.YearMonth, order.Symbol)
+            if order.Side == Side.Buy and order.MaxPosition < float(position) + order.Size:
+                return order, False
+            if order.Side == Side.Sell and order.MaxPosition < abs(float(position) - order.Size):
+                return order, False
             return order, True
         except Exception as e:
             self.__logger.error('BalanceCheck Error: %s' % e)
@@ -387,6 +436,7 @@ class Scheduler:
                     order.FillPrice = fill[0]['level']
                     order.FillSize = fill[0]['size']
                     order.Status = OrderStatus.Filled
+                    order.BrokerReferenceId = fill[0]['dealId']
                     update = self.__store.UpdateStatus(order)
                     result += update
                 else:
