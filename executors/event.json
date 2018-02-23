@@ -24,6 +24,10 @@
               "Size":{
                 "N":"100"
               },
+              "StopDistance":
+              {
+                 "N":"4"
+              },
               "OrdType":{
                 "S":"MARKET"
               }

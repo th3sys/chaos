@@ -42,7 +42,7 @@ class IGParams(object):
 
 
 class Order(object):
-    def __init__(self, orderId, transactionTime, symbol, side, size, ordType, maturity, name, group, risk, maxPos):
+    def __init__(self, orderId, transactionTime, symbol, side, size, ordType, maturity, name, group, risk, maxPos, stop):
         self.OrderId = orderId
         self.TransactionTime = transactionTime
         self.Side = side
@@ -61,6 +61,7 @@ class Order(object):
         self.FillSize = None
         self.Status = OrderStatus.Pending
         self.BrokerReferenceId = ''
+        self.StopDistance = stop
 
 
 class Money(object):
@@ -84,7 +85,8 @@ class StoreManager(object):
                   "Side": order.Side,
                   "FilledSize": decimal.Decimal(str(order.FillSize)),
                   "Price": decimal.Decimal(str(order.FillPrice)),
-                  "Broker": {"Name": "IG", "RefType": "dealId", "Ref": order.BrokerReferenceId}
+                  "Broker": {"Name": "IG", "RefType": "dealId", "Ref": order.BrokerReferenceId},
+                  "StopDistance": order.StopDistance
                 }
             if order.Status == OrderStatus.Failed:
                 trade = {}
@@ -208,15 +210,15 @@ class IGClient:
                     "direction": order.Side,
                     "epic": order.Epic,
                     "expiry": order.Maturity,
-                    "forceOpen": False,
-                    "guaranteedStop": False,
+                    "forceOpen": False if order.StopDistance is None else True,
+                    "guaranteedStop": False if order.StopDistance is None else True,
                     "level": None,
                     "limitDistance": None,
                     "limitLevel": None,
                     "orderType": order.OrdType,
                     "quoteId": None,
                     "size": order.Size,
-                    "stopDistance": None,
+                    "stopDistance": order.StopDistance,
                     "stopLevel": None,
                     "timeInForce": "FILL_OR_KILL",
                     "trailingStop": None,
@@ -327,10 +329,11 @@ class Scheduler:
                  if x['TradingEnabled'] is True and x['Broker'] == 'IG']
 
         pending = [(x['OrderId']['S'], x['TransactionTime']['S'], x['Symbol']['S'], x['Order']['M']['Side']['S'],
-                    x['Order']['M']['Size']['N'], x['Order']['M']['OrdType']['S'], x['Maturity']['S'])
+                    x['Order']['M']['Size']['N'], x['Order']['M']['OrdType']['S'], x['Maturity']['S'],
+                    None if 'StopDistance' not in x['Order']['M'] else x['Order']['M']['StopDistance']['N'])
                    for x in orders if x['Broker']['S'] == 'IG']
 
-        valid = [Order(p[0], p[1], p[2], p[3], p[4], p[5], p[6], f[1], f[2], f[3], f[4])
+        valid = [Order(p[0], p[1], p[2], p[3], p[4], p[5], p[6], f[1], f[2], f[3], f[4], p[7])
                  for f in found for p in pending if f[0] == p[2]]
 
         invalid = [key for key in keys if key not in map(lambda y: (y[0], 'IG'), found)]
