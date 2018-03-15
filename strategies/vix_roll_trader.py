@@ -46,7 +46,7 @@ class VixTrader(object):
         self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX', today.date()))
         self.__OpenPosition = 0
         self.__MaxRoll = 0.1
-        self.__StdSize = 100
+        self.__StdSize = os.environ['STD_SIZE']
         self.__VIX = Quote('VIX')
 
     def S3Debug(self, line):
@@ -299,7 +299,8 @@ def main(event, context):
     logger.info('context %s' % context)
 
     if 'SECURITIES_TABLE' not in os.environ or 'ORDERS_TABLE' not in os.environ or 'ROLL_FILE' not in os.environ \
-            or 'QUOTES_TABLE' not in os.environ or 'DEBUG_FOLDER' not in os.environ or 'BACK_TEST' not in os.environ:
+            or 'QUOTES_TABLE' not in os.environ or 'DEBUG_FOLDER' not in os.environ or 'BACK_TEST' not in os.environ \
+            or 'STD_SIZE' not in os.environ:
         logger.error('ENVIRONMENT VARS are not set')
         return json.dumps({'State': 'ERROR'})
 
