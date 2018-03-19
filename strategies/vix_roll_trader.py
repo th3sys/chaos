@@ -46,7 +46,7 @@ class VixTrader(object):
         self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX', today.date()))
         self.__OpenPosition = 0
         self.__MaxRoll = 0.1
-        self.__StdSize = os.environ['STD_SIZE']
+        self.__StdSize = int(os.environ['STD_SIZE'])
         self.__VIX = Quote('VIX')
 
     def S3Debug(self, line):
