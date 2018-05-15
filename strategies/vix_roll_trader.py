@@ -119,7 +119,7 @@ class VixTrader(object):
     def SendOrder(self, symbol, maturity, side, size, reason):
         try:
 
-            if self.__isStopAttached:
+            if self.__isStopAttached and reason == 'OPEN':
                 order = {
                     "Side": side,
                     "Size": decimal.Decimal(str(size)),
