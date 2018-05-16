@@ -15,6 +15,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from functools import reduce
 import copy
+import time
 import decimal
 
 
@@ -252,6 +253,22 @@ class IGClient:
             return None
 
     @Connection.ioreliable
+    async def GetActivities(self, fromDate, details=False):
+        try:
+            url = '%s/history/activity?from=%s&detailed=%s' % (self.__url, fromDate, details)
+            with async_timeout.timeout(self.__timeout):
+                self.__logger.info('Calling GetActivities ...')
+                tokens = copy.deepcopy(self.__tokens)
+                tokens['Version'] = "3"
+                response = await self.__connection.get(url=url, headers=tokens)
+                self.__logger.info('GetActivities Response Code: {}'.format(response.status))
+                payload = await response.json()
+                return payload
+        except Exception as e:
+            self.__logger.error('GetActivities: %s, %s' % (self.__url, e))
+            return None
+
+    @Connection.ioreliable
     async def GetPosition(self, dealId):
         try:
             url = '%s/positions/%s' % (self.__url, dealId)
@@ -422,15 +439,18 @@ class Scheduler:
                 if 'errorCode' in deal:
                     return order.OrderId, result
 
-                positions = await self.__client.GetPositions()
-                self.__logger.info('GetPositions: %s' % positions)
-                fill = [p['position'] for p in positions['positions']
-                       if p['position']['dealReference'] == deal['dealReference']]
+                sd = time.localtime(float(order.TransactionTime))
+                activities = await self.__client.GetActivities('%s-%s-%s' % (sd.tm_year, sd.tm_mon, sd.tm_mday), True)
+                # positions = await self.__client.GetPositions()
+
+                self.__logger.info('GetActivities: %s' % activities)
+                fill = [a for a in activities['activities']
+                       if a['details']['dealReference'] == deal['dealReference']]
                 if len(fill) == 1:
-                    order.FillTime = fill[0]['createdDateUTC']
-                    order.FillPrice = fill[0]['level']
-                    order.FillSize = fill[0]['size']
-                    order.Status = OrderStatus.Filled
+                    order.FillTime = fill[0]['date']
+                    order.FillPrice = fill[0]['details']['level']
+                    order.FillSize = fill[0]['details']['size']
+                    order.Status = OrderStatus.Filled if fill[0]['status'] == 'ACCEPTED' else OrderStatus.Failed
                     order.BrokerReferenceId = fill[0]['dealId']
                     update = self.__store.UpdateStatus(order)
                     result += update
