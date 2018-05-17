@@ -439,25 +439,39 @@ class Scheduler:
                 if 'errorCode' in deal:
                     return order.OrderId, result
 
-                sd = time.localtime(float(order.TransactionTime))
-                activities = await self.__client.GetActivities('%s-%s-%s' % (sd.tm_year, sd.tm_mon, sd.tm_mday), True)
-                # positions = await self.__client.GetPositions()
-
-                self.__logger.info('GetActivities: %s' % activities)
-                fill = [a for a in activities['activities']
-                       if a['details']['dealReference'] == deal['dealReference']]
+                # confirm by position
+                positions = await self.__client.GetPositions()
+                self.__logger.info('GetPositions: %s' % positions)
+                fill = [p['position'] for p in positions['positions']
+                       if p['position']['dealReference'] == deal['dealReference']]
                 if len(fill) == 1:
-                    order.FillTime = fill[0]['date']
-                    order.FillPrice = fill[0]['details']['level']
-                    order.FillSize = fill[0]['details']['size']
-                    order.Status = OrderStatus.Filled if fill[0]['status'] == 'ACCEPTED' else OrderStatus.Failed
+                    order.FillTime = fill[0]['createdDateUTC']
+                    order.FillPrice = fill[0]['level']
+                    order.FillSize = fill[0]['size']
+                    order.Status = OrderStatus.Filled
                     order.BrokerReferenceId = fill[0]['dealId']
                     update = self.__store.UpdateStatus(order)
                     result += update
                 else:
-                    order.Status = OrderStatus.Failed
-                    update = self.__store.UpdateStatus(order)
-                    result += 'Order Failed. %s' % update
+                    # confirm by activity
+                    time.sleep(1)
+                    sd = time.localtime(float(order.TransactionTime))
+                    activities = await self.__client.GetActivities('%s-%s-%s' % (sd.tm_year, sd.tm_mon, sd.tm_mday), True)
+                    self.__logger.info('GetActivities: %s' % activities)
+                    fill = [a for a in activities['activities']
+                        if a['details']['dealReference'] == deal['dealReference']]
+                    if len(fill) == 1:
+                        order.FillTime = fill[0]['date']
+                        order.FillPrice = fill[0]['details']['level']
+                        order.FillSize = fill[0]['details']['size']
+                        order.Status = OrderStatus.Filled if fill[0]['status'] == 'ACCEPTED' else OrderStatus.Failed
+                        order.BrokerReferenceId = fill[0]['dealId']
+                        update = self.__store.UpdateStatus(order)
+                        result += update
+                    else:
+                        order.Status = OrderStatus.Failed
+                        update = self.__store.UpdateStatus(order)
+                        result += 'Order Failed. %s' % update
             else:
                 result = 'Contract for %s %s could not be found' % (order.Symbol, order.Maturity)
             return order.OrderId, result
