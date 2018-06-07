@@ -231,7 +231,9 @@ class VixTrader(object):
             self.Logger.warn('Only reduce positions in the future so close to expiry: %s %s' % (expiry, date))
             return
 
+        self.Logger.info('Checking: %s >= %s' % (abs(roll), self.__MaxRoll))
         if abs(roll) >= self.__MaxRoll:
+            self.Logger.info('Conditions have been met. Will create an order')
             side = Side.Sell if (self.__FrontFuture.Close - self.__VIX.Close) >= 0 else Side.Buy
             if self.IsExceeded(side=side, quantity=self.__StdSize, position=self.__OpenPosition):
                 self.Logger.warn('Exceeded MaxPosition size: %s, pos: %s' % (self.__StdSize, self.__OpenPosition))
