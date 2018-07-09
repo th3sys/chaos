@@ -45,7 +45,7 @@ class VixTrader(object):
 
         self.__FrontFuture = Quote(self.secDef.get_front_month_future('VX', today.date()))
         self.__OpenPosition = 0
-        self.__MaxRoll = 0.1
+        self.__MaxRoll = 0.10
         self.__StdSize = int(os.environ['STD_SIZE'])
         self.__VIX = Quote('VIX')
 
@@ -231,8 +231,12 @@ class VixTrader(object):
             self.Logger.warn('Only reduce positions in the future so close to expiry: %s %s' % (expiry, date))
             return
 
-        self.Logger.info('Checking: %s >= %s' % (abs(roll), self.__MaxRoll))
-        if abs(roll) >= self.__MaxRoll:
+        abs_roll = abs(roll)
+        self.Logger.info('Checking: %s >= %s' % (abs_roll, self.__MaxRoll))
+        self.Logger.info('Checking types: %s, %s' % (type(abs_roll), type(self.__MaxRoll)))
+        self.Logger.info('Checking result: ' % abs_roll >= self.__MaxRoll)
+
+        if abs_roll >= self.__MaxRoll:
             self.Logger.info('Conditions have been met. Will create an order')
             side = Side.Sell if (self.__FrontFuture.Close - self.__VIX.Close) >= 0 else Side.Buy
             if self.IsExceeded(side=side, quantity=self.__StdSize, position=self.__OpenPosition):
