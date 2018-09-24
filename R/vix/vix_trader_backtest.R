@@ -9,12 +9,17 @@ colnames(indexesdt) <- c("spx","vix")
 returns = data.frame(DATE= as.Date(indexes[-1,]$DATE), SP_FUT=indexes[-1,]$SP_NAME, 
                      VIX_FUT=indexes[-1,]$VIX_NAME, VIX_TTS=indexes[-1,]$VIX_DAYS_LEFT,
                      SP_CLOSE=indexes[-1,]$SP_CLOSE, VIX_CLOSE=indexes[-1,]$VIX_CLOSE,
+                     VIX_SPOT_CLOSE=indexes[-1,]$VIX_SPOT_CLOSE,
+                     spot_return=diff(indexes$VIX_SPOT_CLOSE),
+                     sp_return=diff(indexes$SP_CLOSE),
                      diff(indexesdt)/indexesdt[-nrow(indexesdt),])
 
 # fit the model
+vix_spot_fit <- lm(spot_return~sp_return, data=returns)
 vix_spx_fit <- lm(vix~spx, data=returns)
 vix_fit <- lm(vix~spx+I(VIX_TTS*spx), data=returns)
 # mean squared error (MSE). samller is better
+mean(vix_spot_fit$residuals^2)
 mean(vix_spx_fit$residuals^2)
 mean(vix_fit$residuals^2)
 # lower AIC better
@@ -22,7 +27,8 @@ vix_spx_step <- stepAIC(vix_spx_fit, direction = "both")
 vix_spx_step$anova
 vix_fit_step <- stepAIC(vix_fit, direction = "both")
 vix_fit_step$anova
-
+vix_spot_step <- stepAIC(vix_spot_fit, direction = "both")
+vix_spot_step$anova
 
 #use
 #sell TTS > 10 and (VIX_FUT-VIX_SPOT)/TTS > 0.10
