@@ -31,12 +31,48 @@ vix_spot_step <- stepAIC(vix_spot_fit, direction = "both")
 vix_spot_step$anova
 
 #use
+position_open = FALSE
+results <- data.frame(DATE=as.Date(character()), ACTION=numeric(0), 
+                      VIX_FUT_PRICE= numeric(0))
+returns[order(as.Date(returns$DATE, format="%Y-%m-%d")),]
+train = data.frame(returns) %>%
+  filter(DATE < '2012-1-3') 
+test = data.frame(returns) %>%
+  filter(DATE >= '2012-1-3') 
+i = 1
+for (row in 1:nrow(test)) {
+  date  <- test[row, "DATE"]
+  tts = test[row, "VIX_TTS"]
+  roll = (test[row, "VIX_CLOSE"]-test[row, "VIX_SPOT_CLOSE"])/tts
+  if ((roll < 0.05 || tts < 9) && position_open) {
+  # if ((tts < 2) && position_open) {
+    position_open = FALSE
+    results[i, ] <- c(format(date, "%Y-%m-%d"), as.numeric(1), as.numeric(test[row, "VIX_CLOSE"]))
+    i <- i + 1
+    print(paste("Buy On", date, " roll is ", roll))
+  }
+  if (roll > 0.10 && tts > 10 && !position_open) {
+  # if (roll > 0.10 && !position_open) {
+    position_open = TRUE
+    results[i, ] <- c(format(date, "%Y-%m-%d"), as.numeric(-1), as.numeric(test[row, "VIX_CLOSE"]))
+    i <- i + 1
+    print(paste("Sell On", date, " roll is ", roll))
+  }
+  
+}
+
+results$pnl <-  (as.numeric(results$ACTION) *  as.numeric(results$VIX_FUT_PRICE))
+results$pnl <- cumsum(results$pnl)
+for (row in 1:nrow(results)) {
+  if (results[row, "ACTION"] == "-1") {
+    results[row, "pnl"] <- ""
+  }
+}
 #sell TTS > 10 and (VIX_FUT-VIX_SPOT)/TTS > 0.10
 #exit if TTS < 9 or  (VIX_FUT-VIX_SPOT)/TTS < 0.5
 #buy TTS > 10 and (VIX_FUT-VIX_SPOT)/TTS < -0.10
 #exit if TTS < 9 or  (VIX_FUT-VIX_SPOT)/TTS > -0.5
-train = data.frame(returns) %>%
-  filter(DATE < '2012-1-3') 
+
 vix_fit <- lm(vix~spx+I(VIX_TTS*spx), data=train)
 prev = data.frame(returns) %>%
   filter(DATE == '2012-1-3')
