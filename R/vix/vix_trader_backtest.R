@@ -1,7 +1,15 @@
 library(magrittr)
 library(broom)
 library(dplyr)
-
+hedge_calc <- function(train, date){
+  vix_fit <- lm(vix~spx+I(VIX_TTS*spx), data=train)
+  prev = data.frame(train) %>%
+    filter(DATE == date)
+  b1<-coef(vix_fit)[2]
+  b2<-coef(vix_fit)[3]
+  hr <- (b1*100 + b2*prev$VIX_TTS*100)/(0.01*prev$SP_CLOSE) # / 50
+  return(hr)
+}
 # load data
 indexes = read.csv("vix_sp500_front_futures.csv")
 indexesdt = as.matrix(indexes[,c("SP_CLOSE", "VIX_CLOSE")])
@@ -33,28 +41,30 @@ vix_spot_step$anova
 #use
 position_open = FALSE
 results <- data.frame(DATE=as.Date(character()), ACTION=numeric(0), 
-                      VIX_FUT_PRICE= numeric(0),SP_PRICE= numeric(0))
+                      VIX_FUT_PRICE= numeric(0),SP_PRICE= numeric(0),HR= numeric(0))
 returns[order(as.Date(returns$DATE, format="%Y-%m-%d")),]
-train = data.frame(returns) %>%
-  filter(DATE < '2012-1-3') 
+
 test = data.frame(returns) %>%
   filter(DATE >= '2009-1-1') 
 i = 1
 for (row in 1:nrow(test)) {
   date  <- test[row, "DATE"]
   tts = test[row, "VIX_TTS"]
+  train = data.frame(returns) %>%
+    filter(DATE <= date) 
+  hr <- hedge_calc(train, date)
   roll = (test[row, "VIX_CLOSE"]-test[row, "VIX_SPOT_CLOSE"])/tts
   if ((roll < 0.05 || tts < 9) && position_open) {
   # if ((tts < 2) && position_open) {
     position_open = FALSE
-    results[i, ] <- c(format(date, "%Y-%m-%d"), 1, test[row, "VIX_CLOSE"], test[row, "SP_CLOSE"])
+    results[i, ] <- c(format(date, "%Y-%m-%d"), 1, test[row, "VIX_CLOSE"], test[row, "SP_CLOSE"],hr)
     i <- i + 1
     print(paste("Buy On", date, " roll is ", roll))
   }
   if (roll > 0.10 && tts > 10 && !position_open) {
   # if (roll > 0.10 && !position_open) {
     position_open = TRUE
-    results[i, ] <- c(format(date, "%Y-%m-%d"),-1, test[row, "VIX_CLOSE"], test[row, "SP_CLOSE"])
+    results[i, ] <- c(format(date, "%Y-%m-%d"),-1, test[row, "VIX_CLOSE"], test[row, "SP_CLOSE"],hr)
     i <- i + 1
     print(paste("Sell On", date, " roll is ", roll))
   }
@@ -63,29 +73,30 @@ for (row in 1:nrow(test)) {
 results$return <- append(diff(as.numeric(results$VIX_FUT_PRICE)), 0, after = 0)
 results$hedge <- append(diff(as.numeric(results$SP_PRICE)), 0, after = 0)
 results$unhedgedPnL <-  ((-100) * as.numeric(results$ACTION) *  as.numeric(results$VIX_FUT_PRICE))
+results$hedgedReturn <- 0
 results$unhedgedPnL <- cumsum(results$unhedgedPnL)
+
 
 results$unhedgedPnL <- round(results$unhedgedPnL,2)
 results$return <- round(results$return,2)
 results$hedge <- round(results$hedge,2)
-
+results$HR <- round(as.numeric(results$HR),2)
+results$hedge <- (-1)*as.numeric(results$hedge)
+results$return <- (-1)*as.numeric(results$return)
+current_ratio = 0
 for (row in 1:nrow(results)) {
   if (results[row, "ACTION"] == "-1") {
     results[row, "unhedgedPnL"] <- ""
     results[row, "hedge"] <- ""
-    results[row, "return"] <- ""
+    results[row, "return"] <- 0
+    current_ratio = abs(as.numeric(results[row, "HR"]))
+  }
+  if (results[row, "ACTION"] == "1") {
+    results[row, "hedgedReturn"] <- round(as.numeric(results[row, "return"]) +
+      as.numeric(results[row, "hedge"])*current_ratio, 2)
   }
 }
-#sell TTS > 10 and (VIX_FUT-VIX_SPOT)/TTS > 0.10
-#exit if TTS < 9 or  (VIX_FUT-VIX_SPOT)/TTS < 0.5
-#buy TTS > 10 and (VIX_FUT-VIX_SPOT)/TTS < -0.10
-#exit if TTS < 9 or  (VIX_FUT-VIX_SPOT)/TTS > -0.5
+results$totalReturn <- as.numeric(results$hedgedReturn) + as.numeric(results$return)*100
+results$hedgedPnL <- cumsum(results$totalReturn)
 
-vix_fit <- lm(vix~spx+I(VIX_TTS*spx), data=train)
-prev = data.frame(returns) %>%
-  filter(DATE == '2012-1-3')
-b1<-coef(vix_fit)[2]
-b2<-coef(vix_fit)[3]
-hr <- (b1*100 + b2*prev$VIX_TTS*100)/(0.01*prev$SP_CLOSE) # / 50
-hr
 
