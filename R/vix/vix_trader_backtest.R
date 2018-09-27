@@ -33,12 +33,12 @@ vix_spot_step$anova
 #use
 position_open = FALSE
 results <- data.frame(DATE=as.Date(character()), ACTION=numeric(0), 
-                      VIX_FUT_PRICE= numeric(0))
+                      VIX_FUT_PRICE= numeric(0),SP_PRICE= numeric(0))
 returns[order(as.Date(returns$DATE, format="%Y-%m-%d")),]
 train = data.frame(returns) %>%
   filter(DATE < '2012-1-3') 
 test = data.frame(returns) %>%
-  filter(DATE >= '2012-1-3') 
+  filter(DATE >= '2009-1-1') 
 i = 1
 for (row in 1:nrow(test)) {
   date  <- test[row, "DATE"]
@@ -47,25 +47,33 @@ for (row in 1:nrow(test)) {
   if ((roll < 0.05 || tts < 9) && position_open) {
   # if ((tts < 2) && position_open) {
     position_open = FALSE
-    results[i, ] <- c(format(date, "%Y-%m-%d"), as.numeric(1), as.numeric(test[row, "VIX_CLOSE"]))
+    results[i, ] <- c(format(date, "%Y-%m-%d"), 1, test[row, "VIX_CLOSE"], test[row, "SP_CLOSE"])
     i <- i + 1
     print(paste("Buy On", date, " roll is ", roll))
   }
   if (roll > 0.10 && tts > 10 && !position_open) {
   # if (roll > 0.10 && !position_open) {
     position_open = TRUE
-    results[i, ] <- c(format(date, "%Y-%m-%d"), as.numeric(-1), as.numeric(test[row, "VIX_CLOSE"]))
+    results[i, ] <- c(format(date, "%Y-%m-%d"),-1, test[row, "VIX_CLOSE"], test[row, "SP_CLOSE"])
     i <- i + 1
     print(paste("Sell On", date, " roll is ", roll))
   }
   
 }
+results$return <- append(diff(as.numeric(results$VIX_FUT_PRICE)), 0, after = 0)
+results$hedge <- append(diff(as.numeric(results$SP_PRICE)), 0, after = 0)
+results$unhedgedPnL <-  ((-100) * as.numeric(results$ACTION) *  as.numeric(results$VIX_FUT_PRICE))
+results$unhedgedPnL <- cumsum(results$unhedgedPnL)
 
-results$pnl <-  (as.numeric(results$ACTION) *  as.numeric(results$VIX_FUT_PRICE))
-results$pnl <- cumsum(results$pnl)
+results$unhedgedPnL <- round(results$unhedgedPnL,2)
+results$return <- round(results$return,2)
+results$hedge <- round(results$hedge,2)
+
 for (row in 1:nrow(results)) {
   if (results[row, "ACTION"] == "-1") {
-    results[row, "pnl"] <- ""
+    results[row, "unhedgedPnL"] <- ""
+    results[row, "hedge"] <- ""
+    results[row, "return"] <- ""
   }
 }
 #sell TTS > 10 and (VIX_FUT-VIX_SPOT)/TTS > 0.10
